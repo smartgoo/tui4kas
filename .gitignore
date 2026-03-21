@@ -1,0 +1,9 @@
+/target
+.env
+.claude/
+.cursor/
+.DS_Store
+*.swp
+*.swo
+*~
+TASKS.md
