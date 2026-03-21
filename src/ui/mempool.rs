@@ -1,7 +1,7 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Row, Table};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Row, Table, Wrap};
 use ratatui::Frame;
 
 use crate::app::App;
@@ -15,6 +15,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     render_summary(frame, chunks[0], app);
     render_table(frame, chunks[1], app);
+
+    if let Some(ref detail) = app.mempool_detail {
+        render_detail_popup(frame, area, detail);
+    }
 }
 
 fn render_summary(frame: &mut Frame, area: Rect, app: &App) {
@@ -22,18 +26,18 @@ fn render_summary(frame: &mut Frame, area: Rect, app: &App) {
         let orphan_count = mempool.entries.iter().filter(|e| e.is_orphan).count();
         vec![
             Line::from(vec![
-                Span::styled(" Total Entries:  ", Style::default().fg(Color::Gray)),
+                Span::styled(" Total Entries:  ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     mempool.entry_count.to_string(),
                     Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
                 ),
             ]),
             Line::from(vec![
-                Span::styled(" Orphans:        ", Style::default().fg(Color::Gray)),
+                Span::styled(" Orphans:        ", Style::default().fg(Color::DarkGray)),
                 Span::raw(orphan_count.to_string()),
             ]),
             Line::from(vec![
-                Span::styled(" Total Fees:     ", Style::default().fg(Color::Gray)),
+                Span::styled(" Total Fees:     ", Style::default().fg(Color::DarkGray)),
                 Span::raw(format!("{:.8} KAS", sompi_to_kas(mempool.total_fees))),
             ]),
         ]
@@ -65,16 +69,34 @@ fn render_table(frame: &mut Frame, area: Rect, app: &App) {
         )
         .bottom_margin(1);
 
+    // Calculate visible area height (area minus border top/bottom minus header minus header margin)
+    let visible_rows = area.height.saturating_sub(4) as usize;
+    let selected = app.mempool_selected;
+
+    // Calculate scroll offset to keep selection visible
+    let scroll_offset = if selected >= visible_rows {
+        selected - visible_rows + 1
+    } else {
+        0
+    };
+
     let rows: Vec<Row> = if let Some(ref mempool) = app.mempool_state {
         mempool
             .entries
             .iter()
-            .skip(app.mempool_scroll)
-            .map(|entry| {
+            .enumerate()
+            .skip(scroll_offset)
+            .map(|(i, entry)| {
                 let id = if entry.transaction_id.len() > 20 {
                     format!("{}...{}", &entry.transaction_id[..10], &entry.transaction_id[entry.transaction_id.len()-10..])
                 } else {
                     entry.transaction_id.clone()
+                };
+
+                let style = if i == selected {
+                    Style::default().bg(Color::DarkGray).fg(Color::White)
+                } else {
+                    Style::default()
                 };
 
                 Row::new(vec![
@@ -86,6 +108,7 @@ fn render_table(frame: &mut Frame, area: Rect, app: &App) {
                         "No".to_string()
                     },
                 ])
+                .style(style)
             })
             .collect()
     } else {
@@ -105,13 +128,38 @@ fn render_table(frame: &mut Frame, area: Rect, app: &App) {
         Block::default()
             .borders(Borders::ALL)
             .title(Span::styled(
-                " Entries ",
+                " Entries (↑↓ select, Enter details, Esc close) ",
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             )),
-    )
-    .row_highlight_style(Style::default().bg(Color::DarkGray));
+    );
 
     frame.render_widget(table, area);
+}
+
+fn render_detail_popup(frame: &mut Frame, area: Rect, detail: &str) {
+    let popup_width = area.width.min(60);
+    let popup_height = area.height.min(10);
+    let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
+    let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    frame.render_widget(Clear, popup_area);
+
+    let popup = Paragraph::new(detail.to_string())
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled(
+                    " Transaction Detail (Esc to close) ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ))
+                .border_style(Style::default().fg(Color::Yellow)),
+        )
+        .wrap(Wrap { trim: false });
+
+    frame.render_widget(popup, popup_area);
 }

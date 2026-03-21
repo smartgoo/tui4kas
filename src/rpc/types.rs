@@ -4,6 +4,7 @@ use kaspa_rpc_core::{
 };
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ServerInfo {
     pub server_version: String,
     pub network_id: String,
@@ -143,6 +144,47 @@ impl From<RpcFeeEstimate> for FeeEstimateInfo {
 
 pub fn sompi_to_kas(sompi: u64) -> f64 {
     sompi as f64 / 1e8
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MiningInfo {
+    pub hashrate: f64,
+    pub unique_miners: usize,
+    pub top_miners: Vec<(String, usize)>,
+    pub blocks_analyzed: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FeeStats {
+    pub avg_fee_sompi: f64,
+    pub total_fees_sompi: u64,
+    pub tx_count: usize,
+    pub min_fee_sompi: u64,
+    pub max_fee_sompi: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AddressActivity {
+    pub address: String,
+    pub tx_count: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AnalyticsData {
+    pub fee_stats: FeeStats,
+    pub top_senders: Vec<AddressActivity>,
+    pub top_receivers: Vec<AddressActivity>,
+    pub blocks_analyzed: usize,
+    pub total_transactions: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MarketData {
+    pub price_usd: f64,
+    pub price_btc: f64,
+    pub market_cap: f64,
+    pub volume_24h: f64,
+    pub price_change_24h_pct: f64,
 }
 
 #[cfg(test)]

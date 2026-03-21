@@ -19,10 +19,12 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use tokio::sync::Mutex;
 
-use crate::app::{App, CommandLine, Tab};
+use crate::app::{App, CommandLine, DagFocus, Tab};
 use crate::cli::CliArgs;
 use crate::event::{AppEvent, EventHandler};
 use crate::rpc::client::RpcManager;
+use crate::rpc::market;
+use crate::rpc::types::sompi_to_kas;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -58,10 +60,43 @@ async fn main() -> Result<()> {
 
     let rpc_for_explorer = Arc::new(rpc_manager);
 
+    // Start market data polling (every 60 seconds)
+    market::start_market_polling(app.clone(), Duration::from_secs(60));
+
     // Connect in background to not block TUI startup
     let rpc_for_connect = rpc_for_explorer.clone();
+    let rpc_for_mining = rpc_for_explorer.clone();
+    let app_for_mining = app.clone();
     tokio::spawn(async move {
         let _ = rpc_for_connect.connect().await;
+    });
+
+    // Start mining info polling (every 30 seconds, delayed start)
+    let rpc_for_analytics = rpc_for_explorer.clone();
+    let app_for_analytics = app.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let mut ticker = tokio::time::interval(Duration::from_secs(30));
+        loop {
+            ticker.tick().await;
+            if !app_for_mining.lock().await.paused
+                && let Ok(info) = rpc_for_mining.fetch_mining_info().await {
+                    app_for_mining.lock().await.mining_info = Some(info);
+            }
+        }
+    });
+
+    // Start analytics polling (every 30 seconds, delayed start)
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(8)).await;
+        let mut ticker = tokio::time::interval(Duration::from_secs(30));
+        loop {
+            ticker.tick().await;
+            if !app_for_analytics.lock().await.paused
+                && let Ok(data) = rpc_for_analytics.fetch_analytics().await {
+                    app_for_analytics.lock().await.analytics = Some(data);
+            }
+        }
     });
 
     // Event loop
@@ -156,7 +191,7 @@ async fn main() -> Result<()> {
                                     handle_mempool_keys(&mut app_guard, key.code);
                                 }
                                 Tab::BlockDag => {
-                                    handle_blockdag_keys(&mut app_guard, key.code);
+                                    handle_blockdag_keys(&mut app_guard, key.code, &rpc_for_explorer, &app);
                                 }
                                 _ => {}
                             }
@@ -251,40 +286,132 @@ fn handle_rpc_explorer_keys(
                 app_guard.rpc_explorer.is_loading = false;
             });
         }
-        KeyCode::Char('j') => {
-            app.rpc_explorer.scroll_offset = app.rpc_explorer.scroll_offset.saturating_add(1);
+        KeyCode::Char('j') | KeyCode::Char('J') => {
+            let step = if key == KeyCode::Char('J') { 10 } else { 1 };
+            app.rpc_explorer.scroll_offset = app.rpc_explorer.scroll_offset.saturating_add(step);
         }
-        KeyCode::Char('k') => {
-            app.rpc_explorer.scroll_offset = app.rpc_explorer.scroll_offset.saturating_sub(1);
+        KeyCode::Char('k') | KeyCode::Char('K') => {
+            let step = if key == KeyCode::Char('K') { 10 } else { 1 };
+            app.rpc_explorer.scroll_offset = app.rpc_explorer.scroll_offset.saturating_sub(step);
+        }
+        KeyCode::PageDown => {
+            app.rpc_explorer.scroll_offset = app.rpc_explorer.scroll_offset.saturating_add(20);
+        }
+        KeyCode::PageUp => {
+            app.rpc_explorer.scroll_offset = app.rpc_explorer.scroll_offset.saturating_sub(20);
+        }
+        KeyCode::Home => {
+            app.rpc_explorer.scroll_offset = 0;
         }
         _ => {}
     }
 }
 
 fn handle_mempool_keys(app: &mut App, key: KeyCode) {
+    if app.mempool_detail.is_some() {
+        if key == KeyCode::Esc {
+            app.mempool_detail = None;
+        }
+        return;
+    }
+
     match key {
         KeyCode::Up => {
-            app.mempool_scroll = app.mempool_scroll.saturating_sub(1);
+            app.mempool_selected = app.mempool_selected.saturating_sub(1);
         }
         KeyCode::Down => {
             if let Some(ref mempool) = app.mempool_state
-                && app.mempool_scroll < mempool.entries.len().saturating_sub(1) {
-                    app.mempool_scroll += 1;
+                && app.mempool_selected < mempool.entries.len().saturating_sub(1) {
+                    app.mempool_selected += 1;
+            }
+        }
+        KeyCode::Enter => {
+            if let Some(ref mempool) = app.mempool_state
+                && app.mempool_selected < mempool.entries.len() {
+                    let entry = &mempool.entries[app.mempool_selected];
+                    let detail = format!(
+                        "Transaction ID: {}\nFee: {:.8} KAS ({} sompi)\nOrphan: {}",
+                        entry.transaction_id,
+                        sompi_to_kas(entry.fee),
+                        entry.fee,
+                        if entry.is_orphan { "Yes" } else { "No" },
+                    );
+                    app.mempool_detail = Some(detail);
             }
         }
         _ => {}
     }
 }
 
-fn handle_blockdag_keys(app: &mut App, key: KeyCode) {
+fn handle_blockdag_keys(
+    app: &mut App,
+    key: KeyCode,
+    rpc: &Arc<RpcManager>,
+    app_state: &Arc<Mutex<App>>,
+) {
+    if app.dag_block_detail.is_some() {
+        if key == KeyCode::Esc {
+            app.dag_block_detail = None;
+        }
+        return;
+    }
+
     match key {
+        KeyCode::Left | KeyCode::Right => {
+            app.dag_focus = match app.dag_focus {
+                DagFocus::Tips => DagFocus::Parents,
+                DagFocus::Parents => DagFocus::Tips,
+            };
+        }
         KeyCode::Up => {
-            app.dag_scroll = app.dag_scroll.saturating_sub(1);
+            match app.dag_focus {
+                DagFocus::Tips => {
+                    app.dag_tip_selected = app.dag_tip_selected.saturating_sub(1);
+                }
+                DagFocus::Parents => {
+                    app.dag_parent_selected = app.dag_parent_selected.saturating_sub(1);
+                }
+            }
         }
         KeyCode::Down => {
-            if let Some(ref dag) = app.dag_info
-                && app.dag_scroll < dag.tip_hashes.len().saturating_sub(1) {
-                    app.dag_scroll += 1;
+            if let Some(ref dag) = app.dag_info {
+                match app.dag_focus {
+                    DagFocus::Tips => {
+                        if app.dag_tip_selected < dag.tip_hashes.len().saturating_sub(1) {
+                            app.dag_tip_selected += 1;
+                        }
+                    }
+                    DagFocus::Parents => {
+                        if app.dag_parent_selected < dag.virtual_parent_hashes.len().saturating_sub(1) {
+                            app.dag_parent_selected += 1;
+                        }
+                    }
+                }
+            }
+        }
+        KeyCode::Enter => {
+            let hash = if let Some(ref dag) = app.dag_info {
+                match app.dag_focus {
+                    DagFocus::Tips => dag.tip_hashes.get(app.dag_tip_selected).cloned(),
+                    DagFocus::Parents => dag.virtual_parent_hashes.get(app.dag_parent_selected).cloned(),
+                }
+            } else {
+                None
+            };
+
+            if let Some(hash) = hash {
+                app.dag_block_loading = true;
+                let rpc = rpc.clone();
+                let state = app_state.clone();
+                tokio::spawn(async move {
+                    let result = match rpc.get_block_by_hash(&hash).await {
+                        Ok(info) => info,
+                        Err(e) => format!("Error: {}", e),
+                    };
+                    let mut app_guard = state.lock().await;
+                    app_guard.dag_block_detail = Some(result);
+                    app_guard.dag_block_loading = false;
+                });
             }
         }
         _ => {}

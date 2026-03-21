@@ -1,21 +1,78 @@
 use crate::rpc::types::*;
 
+#[derive(Debug, Clone)]
+pub struct DagVisualizerBlock {
+    pub hash_short: String,
+    pub is_selected_parent: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct DagVisualizerColumn {
+    pub blocks: Vec<DagVisualizerBlock>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DagVisualizer {
+    pub columns: Vec<DagVisualizerColumn>,
+}
+
+impl DagVisualizer {
+    pub fn update(&mut self, tip_hashes: &[String], virtual_parents: &[String]) {
+        let blocks: Vec<DagVisualizerBlock> = tip_hashes
+            .iter()
+            .map(|h| {
+                let short = if h.len() >= 8 { &h[..8] } else { h };
+                DagVisualizerBlock {
+                    hash_short: short.to_string(),
+                    is_selected_parent: virtual_parents.contains(h),
+                }
+            })
+            .collect();
+
+        if !blocks.is_empty() {
+            // Only add if tips changed from last column
+            let should_add = self.columns.last().is_none_or(|last| {
+                let last_hashes: Vec<&str> = last.blocks.iter().map(|b| b.hash_short.as_str()).collect();
+                let new_hashes: Vec<&str> = blocks.iter().map(|b| b.hash_short.as_str()).collect();
+                last_hashes != new_hashes
+            });
+
+            if should_add {
+                self.columns.push(DagVisualizerColumn { blocks });
+                // Keep last 30 columns
+                if self.columns.len() > 30 {
+                    self.columns.remove(0);
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DagFocus {
+    #[default]
+    Tips,
+    Parents,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Dashboard,
     Mempool,
     BlockDag,
+    Analytics,
     RpcExplorer,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 4] = [Tab::Dashboard, Tab::Mempool, Tab::BlockDag, Tab::RpcExplorer];
+    pub const ALL: [Tab; 5] = [Tab::Dashboard, Tab::Mempool, Tab::BlockDag, Tab::Analytics, Tab::RpcExplorer];
 
     pub fn title(&self) -> &'static str {
         match self {
             Tab::Dashboard => "Dashboard",
             Tab::Mempool => "Mempool",
             Tab::BlockDag => "BlockDAG",
+            Tab::Analytics => "Analytics",
             Tab::RpcExplorer => "RPC Explorer",
         }
     }
@@ -45,11 +102,21 @@ impl Default for RpcExplorerState {
             available_methods: vec![
                 "get_server_info",
                 "get_block_dag_info",
+                "get_block_count",
                 "get_mempool_entries",
                 "get_coin_supply",
                 "get_fee_estimate",
+                "get_fee_estimate_experimental",
                 "get_connected_peer_info",
-                "get_block_count",
+                "get_peer_addresses",
+                "get_current_network",
+                "get_sink",
+                "get_sink_blue_score",
+                "get_info",
+                "get_sync_status",
+                "get_virtual_chain",
+                "get_headers",
+                "estimate_network_hashes_per_second",
                 "ping",
             ],
             last_response: None,
@@ -222,10 +289,17 @@ impl CommandLine {
             ("get_mempool_entries", "Get mempool entries"),
             ("get_coin_supply", "Get coin supply"),
             ("get_fee_estimate", "Get fee estimate"),
+            ("get_fee_estimate_experimental", "Get experimental fee estimate (verbose)"),
             ("get_connected_peer_info", "Get connected peer info"),
+            ("get_peer_addresses", "Get known peer addresses"),
+            ("get_current_network", "Get current network type"),
+            ("get_sink", "Get sink (virtual selected parent) hash"),
+            ("get_sink_blue_score", "Get sink blue score"),
+            ("get_info", "Get general node info"),
             ("get_headers", "Get header count"),
             ("get_sync_status", "Get sync status"),
             ("get_virtual_chain", "Get virtual selected parent chain"),
+            ("estimate_network_hashes_per_second", "Estimate network hashrate"),
             ("ping", "Ping the node"),
         ]
     }
@@ -241,6 +315,9 @@ pub struct App {
     pub mempool_state: Option<MempoolState>,
     pub coin_supply: Option<CoinSupplyInfo>,
     pub fee_estimate: Option<FeeEstimateInfo>,
+    pub market_data: Option<MarketData>,
+    pub mining_info: Option<MiningInfo>,
+    pub analytics: Option<AnalyticsData>,
 
     pub rpc_explorer: RpcExplorerState,
     pub command_line: CommandLine,
@@ -253,10 +330,18 @@ pub struct App {
     pub last_poll_duration_ms: Option<f64>,
 
     // Mempool table state
-    pub mempool_scroll: usize,
+    pub mempool_selected: usize,
+    pub mempool_detail: Option<String>,
 
-    // BlockDAG tip scroll
-    pub dag_scroll: usize,
+    // BlockDAG selection state
+    pub dag_focus: DagFocus,
+    pub dag_tip_selected: usize,
+    pub dag_parent_selected: usize,
+    pub dag_block_detail: Option<String>,
+    pub dag_block_loading: bool,
+
+    // DAG visualizer state - tracks recent tip snapshots for rendering
+    pub dag_visualizer: DagVisualizer,
 
     // Pause polling
     pub paused: bool,
@@ -273,6 +358,9 @@ impl App {
             mempool_state: None,
             coin_supply: None,
             fee_estimate: None,
+            market_data: None,
+            mining_info: None,
+            analytics: None,
             rpc_explorer: RpcExplorerState::default(),
             command_line: CommandLine::default(),
             node_url: None,
@@ -280,8 +368,14 @@ impl App {
             last_error: None,
             last_refresh: None,
             last_poll_duration_ms: None,
-            mempool_scroll: 0,
-            dag_scroll: 0,
+            mempool_selected: 0,
+            mempool_detail: None,
+            dag_focus: DagFocus::default(),
+            dag_tip_selected: 0,
+            dag_parent_selected: 0,
+            dag_block_detail: None,
+            dag_block_loading: false,
+            dag_visualizer: DagVisualizer::default(),
             paused: false,
         }
     }
@@ -317,6 +411,7 @@ mod tests {
         assert_eq!(Tab::Dashboard.title(), "Dashboard");
         assert_eq!(Tab::Mempool.title(), "Mempool");
         assert_eq!(Tab::BlockDag.title(), "BlockDAG");
+        assert_eq!(Tab::Analytics.title(), "Analytics");
         assert_eq!(Tab::RpcExplorer.title(), "RPC Explorer");
     }
 
@@ -338,6 +433,8 @@ mod tests {
         app.next_tab();
         assert_eq!(app.active_tab, Tab::BlockDag);
         app.next_tab();
+        assert_eq!(app.active_tab, Tab::Analytics);
+        app.next_tab();
         assert_eq!(app.active_tab, Tab::RpcExplorer);
         app.next_tab();
         assert_eq!(app.active_tab, Tab::Dashboard); // wraps
@@ -348,6 +445,8 @@ mod tests {
         let mut app = App::new();
         app.prev_tab();
         assert_eq!(app.active_tab, Tab::RpcExplorer); // wraps from 0
+        app.prev_tab();
+        assert_eq!(app.active_tab, Tab::Analytics);
         app.prev_tab();
         assert_eq!(app.active_tab, Tab::BlockDag);
     }
@@ -629,5 +728,76 @@ mod tests {
         assert!(!cl.active);
         assert_eq!(cl.input, "");
         assert_eq!(cl.cursor_pos, 0);
+    }
+
+    // --- RpcExplorerState ---
+
+    #[test]
+    fn rpc_explorer_default_has_all_methods() {
+        let state = RpcExplorerState::default();
+        assert!(state.available_methods.len() >= 18);
+        assert!(state.available_methods.contains(&"ping"));
+        assert!(state.available_methods.contains(&"get_server_info"));
+        assert!(state.available_methods.contains(&"get_sink"));
+        assert!(state.available_methods.contains(&"get_sink_blue_score"));
+        assert!(state.available_methods.contains(&"get_info"));
+        assert!(state.available_methods.contains(&"get_peer_addresses"));
+        assert!(state.available_methods.contains(&"get_current_network"));
+        assert!(state.available_methods.contains(&"get_fee_estimate_experimental"));
+        assert!(state.available_methods.contains(&"estimate_network_hashes_per_second"));
+    }
+
+    // --- DagVisualizer ---
+
+    #[test]
+    fn dag_visualizer_starts_empty() {
+        let vis = DagVisualizer::default();
+        assert!(vis.columns.is_empty());
+    }
+
+    #[test]
+    fn dag_visualizer_adds_column() {
+        let mut vis = DagVisualizer::default();
+        let tips = vec!["abc123".to_string(), "def456".to_string()];
+        let parents = vec!["abc123".to_string()];
+        vis.update(&tips, &parents);
+        assert_eq!(vis.columns.len(), 1);
+        assert_eq!(vis.columns[0].blocks.len(), 2);
+        assert!(vis.columns[0].blocks[0].is_selected_parent);
+        assert!(!vis.columns[0].blocks[1].is_selected_parent);
+    }
+
+    #[test]
+    fn dag_visualizer_skips_duplicate() {
+        let mut vis = DagVisualizer::default();
+        let tips = vec!["abc12345".to_string()];
+        let parents = vec![];
+        vis.update(&tips, &parents);
+        vis.update(&tips, &parents);
+        assert_eq!(vis.columns.len(), 1);
+    }
+
+    #[test]
+    fn dag_visualizer_caps_at_30() {
+        let mut vis = DagVisualizer::default();
+        for i in 0..35 {
+            let tips = vec![format!("hash{:04}", i)];
+            vis.update(&tips, &[]);
+        }
+        assert_eq!(vis.columns.len(), 30);
+    }
+
+    #[test]
+    fn rpc_explorer_methods_match_available_commands() {
+        let state = RpcExplorerState::default();
+        let commands = CommandLine::available_commands();
+        // Every explorer method should have a corresponding command entry
+        for method in &state.available_methods {
+            assert!(
+                commands.iter().any(|(name, _)| name == method),
+                "Explorer method '{}' missing from available_commands",
+                method
+            );
+        }
     }
 }

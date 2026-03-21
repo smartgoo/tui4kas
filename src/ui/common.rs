@@ -24,7 +24,7 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &App) {
                 .title(" tui4kas "),
         )
         .select(app.tab_index())
-        .style(Style::default().fg(Color::Gray))
+        .style(Style::default().fg(Color::DarkGray))
         .highlight_style(
             Style::default()
                 .fg(Color::Cyan)

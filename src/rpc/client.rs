@@ -117,7 +117,11 @@ impl RpcManager {
             Err(e) => errors.push(format!("server_info: {}", e)),
         }
         match dag_info {
-            Ok(v) => app.dag_info = Some(v.into()),
+            Ok(v) => {
+                let info: crate::rpc::types::DagInfo = v.into();
+                app.dag_visualizer.update(&info.tip_hashes, &info.virtual_parent_hashes);
+                app.dag_info = Some(info);
+            }
             Err(e) => errors.push(format!("dag_info: {}", e)),
         }
         match mempool {
@@ -173,13 +177,45 @@ impl RpcManager {
                 let r = self.client.get_fee_estimate().await?;
                 Ok(format!("{:#?}", r))
             }
+            "get_fee_estimate_experimental" => {
+                let r = self.client.get_fee_estimate_experimental(true).await?;
+                Ok(format!("{:#?}", r))
+            }
             "get_connected_peer_info" => {
                 let r = self.client.get_connected_peer_info().await?;
+                Ok(format!("{:#?}", r))
+            }
+            "get_peer_addresses" => {
+                let r = self.client.get_peer_addresses().await?;
+                Ok(format!("{:#?}", r))
+            }
+            "get_current_network" => {
+                let r = self.client.get_current_network().await?;
+                Ok(format!("{:#?}", r))
+            }
+            "get_sink" => {
+                let r = self.client.get_sink().await?;
+                Ok(format!("{:#?}", r))
+            }
+            "get_sink_blue_score" => {
+                let r = self.client.get_sink_blue_score().await?;
+                Ok(format!("{:#?}", r))
+            }
+            "get_info" => {
+                let r = self.client.get_info().await?;
                 Ok(format!("{:#?}", r))
             }
             "get_block_count" => {
                 let r = self.client.get_block_count().await?;
                 Ok(format!("{:#?}", r))
+            }
+            "estimate_network_hashes_per_second" => {
+                let dag = self.client.get_block_dag_info().await?;
+                let r = self.client.estimate_network_hashes_per_second(
+                    1000,
+                    Some(dag.sink),
+                ).await?;
+                Ok(format!("Estimated network hash rate: {} hashes/second", r))
             }
             "get_headers" => {
                 let r = self.client.get_block_count().await?;
@@ -216,6 +252,150 @@ impl RpcManager {
         }
     }
 
+    pub async fn fetch_mining_info(&self) -> Result<crate::rpc::types::MiningInfo> {
+        use std::collections::HashMap;
+
+        let dag = self.client.get_block_dag_info().await?;
+
+        // Estimate hashrate
+        let hashrate = self.client.estimate_network_hashes_per_second(
+            1000,
+            Some(dag.sink),
+        ).await.unwrap_or(0) as f64;
+
+        // Get virtual chain to find recent blocks
+        let vspc = self.client.get_virtual_chain_from_block(
+            dag.pruning_point_hash,
+            false,
+            None,
+        ).await?;
+
+        // Sample the last N blocks from the chain
+        let sample_size = 100.min(vspc.added_chain_block_hashes.len());
+        let start = vspc.added_chain_block_hashes.len().saturating_sub(sample_size);
+        let sample_hashes = &vspc.added_chain_block_hashes[start..];
+
+        let mut miner_counts: HashMap<String, usize> = HashMap::new();
+
+        for hash in sample_hashes {
+            if let Ok(block) = self.client.get_block(*hash, true).await {
+                // The first transaction in a block is the coinbase
+                if let Some(coinbase) = block.transactions.first() {
+                    // Miner address is typically in the first output
+                    if let Some(output) = coinbase.outputs.first()
+                        && let Some(ref verbose) = output.verbose_data {
+                            let addr = verbose.script_public_key_address.to_string();
+                            let short_addr = if addr.len() > 16 {
+                                format!("{}...{}", &addr[..10], &addr[addr.len()-6..])
+                            } else {
+                                addr.clone()
+                            };
+                            *miner_counts.entry(short_addr).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+
+        let unique_miners = miner_counts.len();
+        let mut top_miners: Vec<(String, usize)> = miner_counts.into_iter().collect();
+        top_miners.sort_by(|a, b| b.1.cmp(&a.1));
+        top_miners.truncate(5);
+
+        Ok(crate::rpc::types::MiningInfo {
+            hashrate,
+            unique_miners,
+            top_miners,
+            blocks_analyzed: sample_size,
+        })
+    }
+
+    pub async fn fetch_analytics(&self) -> Result<crate::rpc::types::AnalyticsData> {
+        use std::collections::HashMap;
+
+        let dag = self.client.get_block_dag_info().await?;
+
+        // Get virtual chain
+        let vspc = self.client.get_virtual_chain_from_block(
+            dag.pruning_point_hash,
+            true,
+            None,
+        ).await?;
+
+        // Sample recent blocks
+        let sample_size = 50.min(vspc.added_chain_block_hashes.len());
+        let start = vspc.added_chain_block_hashes.len().saturating_sub(sample_size);
+        let sample_hashes = &vspc.added_chain_block_hashes[start..];
+
+        let mut total_fees: u64 = 0;
+        let mut fee_count: usize = 0;
+        let mut min_fee = u64::MAX;
+        let mut max_fee = 0u64;
+        let mut receiver_counts: HashMap<String, usize> = HashMap::new();
+        let mut total_transactions: usize = 0;
+
+        for hash in sample_hashes {
+            if let Ok(block) = self.client.get_block(*hash, true).await {
+                for (i, tx) in block.transactions.iter().enumerate() {
+                    if i == 0 { continue; } // skip coinbase
+                    total_transactions += 1;
+
+                    // Extract fee from mass via verbose data
+                    if let Some(ref verbose) = tx.verbose_data {
+                        let mass = verbose.compute_mass;
+                        if mass > 0 {
+                            total_fees += mass;
+                            fee_count += 1;
+                            min_fee = min_fee.min(mass);
+                            max_fee = max_fee.max(mass);
+                        }
+                    }
+
+                    // Track receiver addresses (from outputs)
+                    for output in &tx.outputs {
+                        if let Some(ref verbose) = output.verbose_data {
+                            let addr = verbose.script_public_key_address.to_string();
+                            let short = if addr.len() > 16 {
+                                format!("{}...{}", &addr[..10], &addr[addr.len()-6..])
+                            } else {
+                                addr
+                            };
+                            *receiver_counts.entry(short).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        let avg_fee = if fee_count > 0 { total_fees as f64 / fee_count as f64 } else { 0.0 };
+        if min_fee == u64::MAX { min_fee = 0; }
+
+        let mut top_receivers: Vec<_> = receiver_counts.into_iter()
+            .map(|(a, c)| crate::rpc::types::AddressActivity { address: a, tx_count: c })
+            .collect();
+        top_receivers.sort_by(|a, b| b.tx_count.cmp(&a.tx_count));
+        top_receivers.truncate(10);
+
+        Ok(crate::rpc::types::AnalyticsData {
+            fee_stats: crate::rpc::types::FeeStats {
+                avg_fee_sompi: avg_fee,
+                total_fees_sompi: total_fees,
+                tx_count: fee_count,
+                min_fee_sompi: min_fee,
+                max_fee_sompi: max_fee,
+            },
+            top_senders: vec![], // Input verbose data doesn't include sender addresses in this RPC version
+            top_receivers,
+            blocks_analyzed: sample_size,
+            total_transactions,
+        })
+    }
+
+    pub async fn get_block_by_hash(&self, hash_str: &str) -> Result<String> {
+        let hash = kaspa_rpc_core::RpcHash::from_str(hash_str)
+            .map_err(|e| anyhow::anyhow!("Invalid hash: {}", e))?;
+        let block = self.client.get_block(hash, true).await?;
+        Ok(format!("{:#?}", block))
+    }
 }
 
 impl Drop for RpcManager {

@@ -67,12 +67,18 @@ fn render_response(frame: &mut Frame, area: Rect, app: &App) {
         "Press Enter to execute the selected RPC method.".to_string()
     };
 
+    let scroll_hint = if app.rpc_explorer.scroll_offset > 0 {
+        format!(" Response (line {} | j/k scroll, J/K fast, PgUp/PgDn, Home) ", app.rpc_explorer.scroll_offset)
+    } else {
+        " Response (j/k to scroll) ".to_string()
+    };
+
     let paragraph = Paragraph::new(content)
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .title(Span::styled(
-                    " Response ",
+                    scroll_hint,
                     Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),

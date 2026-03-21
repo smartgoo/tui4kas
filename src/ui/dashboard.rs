@@ -10,7 +10,11 @@ use crate::rpc::types::sompi_to_kas;
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints([
+            Constraint::Percentage(35),
+            Constraint::Percentage(35),
+            Constraint::Percentage(30),
+        ])
         .split(area);
 
     let top = Layout::default()
@@ -18,15 +22,16 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(rows[0]);
 
-    let bottom = Layout::default()
+    let middle = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(rows[1]);
 
     render_node_info(frame, top[0], app);
     render_network_stats(frame, top[1], app);
-    render_coin_supply(frame, bottom[0], app);
-    render_mempool_summary(frame, bottom[1], app);
+    render_markets(frame, middle[0], app);
+    render_mempool_summary(frame, middle[1], app);
+    render_mining_info(frame, rows[2], app);
 }
 
 fn render_node_info(frame: &mut Frame, area: Rect, app: &App) {
@@ -39,39 +44,35 @@ fn render_node_info(frame: &mut Frame, area: Rect, app: &App) {
 
         let mut lines = vec![
             Line::from(vec![
-                Span::styled(" Version:     ", Style::default().fg(Color::Gray)),
+                Span::styled(" Version:     ", Style::default().fg(Color::DarkGray)),
                 Span::raw(&info.server_version),
             ]),
             Line::from(vec![
-                Span::styled(" Network:     ", Style::default().fg(Color::Gray)),
+                Span::styled(" Network:     ", Style::default().fg(Color::DarkGray)),
                 Span::raw(&info.network_id),
             ]),
             Line::from(vec![
-                Span::styled(" Synced:      ", Style::default().fg(Color::Gray)),
+                Span::styled(" Synced:      ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     if info.is_synced { "Yes" } else { "No" },
                     synced_style,
                 ),
             ]),
             Line::from(vec![
-                Span::styled(" UTXO Index:  ", Style::default().fg(Color::Gray)),
+                Span::styled(" UTXO Index:  ", Style::default().fg(Color::DarkGray)),
                 Span::raw(if info.has_utxo_index { "Yes" } else { "No" }),
-            ]),
-            Line::from(vec![
-                Span::styled(" DAA Score:   ", Style::default().fg(Color::Gray)),
-                Span::raw(info.virtual_daa_score.to_string()),
             ]),
         ];
 
         if let Some(ref url) = app.node_url {
             lines.push(Line::from(vec![
-                Span::styled(" URL:         ", Style::default().fg(Color::Gray)),
+                Span::styled(" URL:         ", Style::default().fg(Color::DarkGray)),
                 Span::raw(url),
             ]));
         }
         if let Some(ref uid) = app.node_uid {
             lines.push(Line::from(vec![
-                Span::styled(" Node ID:     ", Style::default().fg(Color::Gray)),
+                Span::styled(" Node ID:     ", Style::default().fg(Color::DarkGray)),
                 Span::raw(uid),
             ]));
         }
@@ -98,26 +99,26 @@ fn render_node_info(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_network_stats(frame: &mut Frame, area: Rect, app: &App) {
-    let lines = if let Some(ref dag) = app.dag_info {
+    let mut lines = if let Some(ref dag) = app.dag_info {
         vec![
             Line::from(vec![
-                Span::styled(" Block Count:  ", Style::default().fg(Color::Gray)),
+                Span::styled(" Block Count:    ", Style::default().fg(Color::DarkGray)),
                 Span::raw(format_number(dag.block_count)),
             ]),
             Line::from(vec![
-                Span::styled(" Header Count: ", Style::default().fg(Color::Gray)),
+                Span::styled(" Header Count:   ", Style::default().fg(Color::DarkGray)),
                 Span::raw(format_number(dag.header_count)),
             ]),
             Line::from(vec![
-                Span::styled(" Difficulty:   ", Style::default().fg(Color::Gray)),
-                Span::raw(format!("{:.2}", dag.difficulty)),
+                Span::styled(" Difficulty:     ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{:.0}", dag.difficulty)),
             ]),
             Line::from(vec![
-                Span::styled(" DAA Score:    ", Style::default().fg(Color::Gray)),
+                Span::styled(" DAA Score:      ", Style::default().fg(Color::DarkGray)),
                 Span::raw(format_number(dag.virtual_daa_score)),
             ]),
             Line::from(vec![
-                Span::styled(" Tips:         ", Style::default().fg(Color::Gray)),
+                Span::styled(" Tips:           ", Style::default().fg(Color::DarkGray)),
                 Span::raw(dag.tip_hashes.len().to_string()),
             ]),
         ]
@@ -127,6 +128,30 @@ fn render_network_stats(frame: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(Color::DarkGray),
         ))]
     };
+
+    if let Some(ref supply) = app.coin_supply {
+        let max_kas = sompi_to_kas(supply.max_sompi);
+        let circ_kas = sompi_to_kas(supply.circulating_sompi);
+        let pct = if max_kas > 0.0 {
+            (circ_kas / max_kas) * 100.0
+        } else {
+            0.0
+        };
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled(" Max Supply:     ", Style::default().fg(Color::DarkGray)),
+            Span::raw(format!("{} KAS", format_number(max_kas as u64))),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled(" Circulating:    ", Style::default().fg(Color::DarkGray)),
+            Span::raw(format!("{} KAS", format_number(circ_kas as u64))),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled(" % Circulating:  ", Style::default().fg(Color::DarkGray)),
+            Span::raw(format!("{:.2}%", pct)),
+        ]));
+    }
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -140,33 +165,44 @@ fn render_network_stats(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-fn render_coin_supply(frame: &mut Frame, area: Rect, app: &App) {
-    let lines = if let Some(ref supply) = app.coin_supply {
-        let max_kas = sompi_to_kas(supply.max_sompi);
-        let circ_kas = sompi_to_kas(supply.circulating_sompi);
-        let pct = if max_kas > 0.0 {
-            (circ_kas / max_kas) * 100.0
+fn render_markets(frame: &mut Frame, area: Rect, app: &App) {
+    let lines = if let Some(ref market) = app.market_data {
+        let change_color = if market.price_change_24h_pct >= 0.0 {
+            Color::Green
         } else {
-            0.0
+            Color::Red
         };
+        let change_prefix = if market.price_change_24h_pct >= 0.0 { "+" } else { "" };
 
         vec![
             Line::from(vec![
-                Span::styled(" Max Supply:         ", Style::default().fg(Color::Gray)),
-                Span::raw(format!("{:.0} KAS", max_kas)),
+                Span::styled(" Price (USD):   ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!("${:.6}", market.price_usd),
+                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    format!("{}{:.2}%", change_prefix, market.price_change_24h_pct),
+                    Style::default().fg(change_color),
+                ),
             ]),
             Line::from(vec![
-                Span::styled(" Circulating:        ", Style::default().fg(Color::Gray)),
-                Span::raw(format!("{:.0} KAS", circ_kas)),
+                Span::styled(" Price (BTC):   ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{:.10}", market.price_btc)),
             ]),
             Line::from(vec![
-                Span::styled(" % Circulating:      ", Style::default().fg(Color::Gray)),
-                Span::raw(format!("{:.2}%", pct)),
+                Span::styled(" Market Cap:    ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format_usd(market.market_cap)),
+            ]),
+            Line::from(vec![
+                Span::styled(" 24h Volume:    ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format_usd(market.volume_24h)),
             ]),
         ]
     } else {
         vec![Line::from(Span::styled(
-            " Waiting for data...",
+            " Fetching market data...",
             Style::default().fg(Color::DarkGray),
         ))]
     };
@@ -174,7 +210,7 @@ fn render_coin_supply(frame: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title(Span::styled(
-            " Coin Supply ",
+            " Markets ",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
@@ -183,16 +219,96 @@ fn render_coin_supply(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
+fn render_mining_info(frame: &mut Frame, area: Rect, app: &App) {
+    let lines = if let Some(ref mining) = app.mining_info {
+        let hashrate_str = format_hashrate(mining.hashrate);
+        let mut lines = vec![
+            Line::from(vec![
+                Span::styled(" Hashrate:        ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    hashrate_str,
+                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(" Unique Miners:   ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{} (last {} blocks)", mining.unique_miners, mining.blocks_analyzed)),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                " Top Miners:",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ];
+
+        for (addr, count) in &mining.top_miners {
+            lines.push(Line::from(vec![
+                Span::raw("   "),
+                Span::styled(addr, Style::default().fg(Color::White)),
+                Span::raw(format!("  ({} blocks)", count)),
+            ]));
+        }
+
+        lines
+    } else {
+        vec![Line::from(Span::styled(
+            " Collecting mining data...",
+            Style::default().fg(Color::DarkGray),
+        ))]
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(Span::styled(
+            " Mining Info ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+fn format_hashrate(hps: f64) -> String {
+    if hps >= 1e18 {
+        format!("{:.2} EH/s", hps / 1e18)
+    } else if hps >= 1e15 {
+        format!("{:.2} PH/s", hps / 1e15)
+    } else if hps >= 1e12 {
+        format!("{:.2} TH/s", hps / 1e12)
+    } else if hps >= 1e9 {
+        format!("{:.2} GH/s", hps / 1e9)
+    } else if hps >= 1e6 {
+        format!("{:.2} MH/s", hps / 1e6)
+    } else if hps >= 1e3 {
+        format!("{:.2} KH/s", hps / 1e3)
+    } else {
+        format!("{:.2} H/s", hps)
+    }
+}
+
+fn format_usd(value: f64) -> String {
+    if value >= 1_000_000_000.0 {
+        format!("${:.2}B", value / 1_000_000_000.0)
+    } else if value >= 1_000_000.0 {
+        format!("${:.2}M", value / 1_000_000.0)
+    } else if value >= 1_000.0 {
+        format!("${:.2}K", value / 1_000.0)
+    } else {
+        format!("${:.2}", value)
+    }
+}
+
 fn render_mempool_summary(frame: &mut Frame, area: Rect, app: &App) {
     let mut lines = Vec::new();
 
     if let Some(ref mempool) = app.mempool_state {
         lines.push(Line::from(vec![
-            Span::styled(" Transactions: ", Style::default().fg(Color::Gray)),
+            Span::styled(" Transactions: ", Style::default().fg(Color::DarkGray)),
             Span::raw(format_number(mempool.entry_count as u64)),
         ]));
         lines.push(Line::from(vec![
-            Span::styled(" Total Fees:   ", Style::default().fg(Color::Gray)),
+            Span::styled(" Total Fees:   ", Style::default().fg(Color::DarkGray)),
             Span::raw(format!("{:.8} KAS", sompi_to_kas(mempool.total_fees))),
         ]));
     } else {
@@ -205,18 +321,18 @@ fn render_mempool_summary(frame: &mut Frame, area: Rect, app: &App) {
     if let Some(ref fee) = app.fee_estimate {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
-            Span::styled(" Priority Fee: ", Style::default().fg(Color::Gray)),
+            Span::styled(" Priority Fee: ", Style::default().fg(Color::DarkGray)),
             Span::raw(&fee.priority_bucket),
         ]));
         if let Some(normal) = fee.normal_buckets.first() {
             lines.push(Line::from(vec![
-                Span::styled(" Normal Fee:   ", Style::default().fg(Color::Gray)),
+                Span::styled(" Normal Fee:   ", Style::default().fg(Color::DarkGray)),
                 Span::raw(normal),
             ]));
         }
         if let Some(low) = fee.low_buckets.first() {
             lines.push(Line::from(vec![
-                Span::styled(" Low Fee:      ", Style::default().fg(Color::Gray)),
+                Span::styled(" Low Fee:      ", Style::default().fg(Color::DarkGray)),
                 Span::raw(low),
             ]));
         }
@@ -276,5 +392,54 @@ mod tests {
     #[test]
     fn format_number_large() {
         assert_eq!(format_number(1_000_000_000_000), "1,000,000,000,000");
+    }
+
+    // --- format_usd ---
+
+    #[test]
+    fn format_usd_billions() {
+        assert_eq!(format_usd(3_800_000_000.0), "$3.80B");
+    }
+
+    #[test]
+    fn format_usd_millions() {
+        assert_eq!(format_usd(50_000_000.0), "$50.00M");
+    }
+
+    #[test]
+    fn format_usd_thousands() {
+        assert_eq!(format_usd(1_500.0), "$1.50K");
+    }
+
+    #[test]
+    fn format_usd_small() {
+        assert_eq!(format_usd(42.50), "$42.50");
+    }
+
+    // --- format_hashrate ---
+
+    #[test]
+    fn format_hashrate_ph() {
+        assert_eq!(format_hashrate(1.5e15), "1.50 PH/s");
+    }
+
+    #[test]
+    fn format_hashrate_th() {
+        assert_eq!(format_hashrate(500e12), "500.00 TH/s");
+    }
+
+    #[test]
+    fn format_hashrate_gh() {
+        assert_eq!(format_hashrate(2.5e9), "2.50 GH/s");
+    }
+
+    #[test]
+    fn format_hashrate_mh() {
+        assert_eq!(format_hashrate(100e6), "100.00 MH/s");
+    }
+
+    #[test]
+    fn format_hashrate_small() {
+        assert_eq!(format_hashrate(500.0), "500.00 H/s");
     }
 }
