@@ -1,4 +1,4 @@
-# tui4kas
+# tui4kas - Kaspa TUI
 
 A terminal UI dashboard for monitoring Kaspa L1 blockchain nodes via wRPC.
 

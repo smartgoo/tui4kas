@@ -1,8 +1,8 @@
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Tabs};
-use ratatui::Frame;
 
 use crate::app::{App, ConnectionStatus, Tab};
 
@@ -12,17 +12,10 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Min(0), Constraint::Length(40)])
         .split(area);
 
-    let titles: Vec<Line> = Tab::ALL
-        .iter()
-        .map(|t| Line::from(t.title()))
-        .collect();
+    let titles: Vec<Line> = Tab::all().iter().map(|t| Line::from(t.title())).collect();
 
     let tabs = Tabs::new(titles)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" tui4kas "),
-        )
+        .block(Block::default().borders(Borders::ALL).title(" tui4kas "))
         .select(app.tab_index())
         .style(Style::default().fg(Color::DarkGray))
         .highlight_style(
@@ -48,7 +41,11 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &App) {
             .unwrap_or_default()
     };
 
-    let poll_color = if app.paused { Color::Yellow } else { Color::DarkGray };
+    let poll_color = if app.paused {
+        Color::Yellow
+    } else {
+        Color::DarkGray
+    };
 
     let status = Paragraph::new(Line::from(vec![
         Span::raw(" "),
@@ -61,4 +58,3 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &App) {
 
     frame.render_widget(status, chunks[1]);
 }
-

@@ -1,6 +1,6 @@
 use kaspa_rpc_core::{
-    GetBlockDagInfoResponse, GetCoinSupplyResponse, GetServerInfoResponse,
-    RpcFeeEstimate, RpcMempoolEntry,
+    GetBlockDagInfoResponse, GetCoinSupplyResponse, GetServerInfoResponse, RpcFeeEstimate,
+    RpcMempoolEntry,
 };
 
 #[derive(Debug, Clone)]
@@ -48,7 +48,11 @@ impl From<GetBlockDagInfoResponse> for DagInfo {
             tip_hashes: r.tip_hashes.iter().map(|h| h.to_string()).collect(),
             difficulty: r.difficulty,
             past_median_time: r.past_median_time,
-            virtual_parent_hashes: r.virtual_parent_hashes.iter().map(|h| h.to_string()).collect(),
+            virtual_parent_hashes: r
+                .virtual_parent_hashes
+                .iter()
+                .map(|h| h.to_string())
+                .collect(),
             pruning_point_hash: r.pruning_point_hash.to_string(),
             virtual_daa_score: r.virtual_daa_score,
             sink: r.sink.to_string(),
@@ -88,10 +92,7 @@ pub struct MempoolState {
 
 impl From<Vec<RpcMempoolEntry>> for MempoolState {
     fn from(r: Vec<RpcMempoolEntry>) -> Self {
-        let entries: Vec<MempoolEntryInfo> = r
-            .into_iter()
-            .map(|e| e.into())
-            .collect();
+        let entries: Vec<MempoolEntryInfo> = r.into_iter().map(|e| e.into()).collect();
         let total_fees = entries.iter().map(|e| e.fee).sum();
         let entry_count = entries.len();
         Self {
@@ -146,6 +147,30 @@ pub fn sompi_to_kas(sompi: u64) -> f64 {
     sompi as f64 / 1e8
 }
 
+pub fn format_number(n: u64) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.push(',');
+        }
+        result.push(c);
+    }
+    result.chars().rev().collect()
+}
+
+pub fn shorten_address(addr: &str, prefix_len: usize, suffix_len: usize) -> String {
+    if addr.len() > prefix_len + suffix_len + 3 {
+        format!(
+            "{}...{}",
+            &addr[..prefix_len],
+            &addr[addr.len() - suffix_len..]
+        )
+    } else {
+        addr.to_string()
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct MiningInfo {
     pub hashrate: f64,
@@ -190,11 +215,11 @@ pub struct MarketData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
     use kaspa_rpc_core::{
-        RpcFeerateBucket, RpcHash, RpcMempoolEntry, RpcNetworkId, RpcSubnetworkId,
-        RpcTransaction, RpcTransactionVerboseData,
+        RpcFeerateBucket, RpcHash, RpcMempoolEntry, RpcNetworkId, RpcSubnetworkId, RpcTransaction,
+        RpcTransactionVerboseData,
     };
+    use std::str::FromStr;
 
     // --- sompi_to_kas ---
 
@@ -275,7 +300,8 @@ mod tests {
 
     #[test]
     fn coin_supply_from_response() {
-        let response = GetCoinSupplyResponse::new(2_900_000_000_000_000_000, 1_000_000_000_000_000_000);
+        let response =
+            GetCoinSupplyResponse::new(2_900_000_000_000_000_000, 1_000_000_000_000_000_000);
         let info: CoinSupplyInfo = response.into();
         assert_eq!(info.max_sompi, 2_900_000_000_000_000_000);
         assert_eq!(info.circulating_sompi, 1_000_000_000_000_000_000);
@@ -366,5 +392,44 @@ mod tests {
         assert_eq!(info.normal_buckets.len(), 1);
         assert_eq!(info.normal_buckets[0], "0.50000000 KAS/gram");
         assert!(info.low_buckets.is_empty());
+    }
+
+    // --- format_number ---
+
+    #[test]
+    fn format_number_zero() {
+        assert_eq!(format_number(0), "0");
+    }
+
+    #[test]
+    fn format_number_small() {
+        assert_eq!(format_number(999), "999");
+    }
+
+    #[test]
+    fn format_number_thousands() {
+        assert_eq!(format_number(1_000), "1,000");
+        assert_eq!(format_number(12_345), "12,345");
+    }
+
+    #[test]
+    fn format_number_millions() {
+        assert_eq!(format_number(1_000_000), "1,000,000");
+    }
+
+    // --- shorten_address ---
+
+    #[test]
+    fn shorten_address_short() {
+        assert_eq!(shorten_address("abcdef", 10, 6), "abcdef");
+    }
+
+    #[test]
+    fn shorten_address_long() {
+        let addr = "kaspa:abcdefghijklmnopqrstuvwxyz0123456789";
+        let result = shorten_address(&addr, 10, 6);
+        assert!(result.contains("..."));
+        assert!(result.starts_with("kaspa:abcd"));
+        assert!(result.ends_with("456789"));
     }
 }

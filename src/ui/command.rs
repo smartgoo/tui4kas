@@ -1,15 +1,17 @@
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
-use ratatui::Frame;
 
 use crate::app::App;
 
 pub fn render_input(frame: &mut Frame, area: Rect, app: &App) {
     let (prompt_style, input_text, cursor_hint) = if app.command_line.active {
         (
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
             app.command_line.input.as_str(),
             "",
         )
@@ -43,7 +45,9 @@ pub fn render_input(frame: &mut Frame, area: Rect, app: &App) {
         .title(Span::styled(
             " Command ",
             if app.command_line.active {
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::DarkGray)
             },
@@ -55,7 +59,9 @@ pub fn render_input(frame: &mut Frame, area: Rect, app: &App) {
     // Show cursor when command line is active
     if app.command_line.active {
         // Count display characters up to cursor byte position
-        let display_chars = app.command_line.input[..app.command_line.cursor_pos].chars().count();
+        let display_chars = app.command_line.input[..app.command_line.cursor_pos]
+            .chars()
+            .count();
         // +1 for border, +2 for "> " prompt
         let cursor_x = area.x + 1 + 2 + display_chars as u16;
         let cursor_y = area.y + 1;
@@ -95,14 +101,12 @@ pub fn render_output(frame: &mut Frame, area: Rect, app: &App) {
 
     let paragraph = Paragraph::new(lines)
         .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(Span::styled(
-                    " Output ",
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                )),
+            Block::default().borders(Borders::ALL).title(Span::styled(
+                " Output ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
         )
         .wrap(Wrap { trim: false })
         .scroll((scroll as u16, 0));

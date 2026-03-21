@@ -1,17 +1,33 @@
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
-use ratatui::Frame;
 
 use crate::app::{App, DagFocus};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+    if app.is_node_syncing() {
+        let block = Block::default().borders(Borders::ALL).title(Span::styled(
+            " BlockDAG ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+        let msg = Paragraph::new(Line::from(Span::styled(
+            " Node is syncing... BlockDAG data will be available once synced.",
+            Style::default().fg(Color::Yellow),
+        )))
+        .block(block);
+        frame.render_widget(msg, area);
+        return;
+    }
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(8),   // visualizer
-            Constraint::Length(12),  // metrics
+            Constraint::Length(8),  // visualizer
+            Constraint::Length(12), // metrics
             Constraint::Min(0),     // tips/parents
         ])
         .split(area);
@@ -47,7 +63,11 @@ fn render_visualizer(frame: &mut Frame, area: Rect, app: &App) {
         let visible_cols = &vis.columns[start..];
 
         // Find max block count per column for row layout
-        let max_blocks = visible_cols.iter().map(|c| c.blocks.len()).max().unwrap_or(0);
+        let max_blocks = visible_cols
+            .iter()
+            .map(|c| c.blocks.len())
+            .max()
+            .unwrap_or(0);
         let display_rows = max_blocks.min(inner_height);
 
         for row in 0..display_rows {
@@ -57,13 +77,23 @@ fn render_visualizer(frame: &mut Frame, area: Rect, app: &App) {
                 if row < col.blocks.len() {
                     let block = &col.blocks[row];
                     let style = if block.is_selected_parent {
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(Color::White)
                     };
-                    let symbol = if block.is_selected_parent { "◆" } else { "◇" };
+                    let symbol = if block.is_selected_parent {
+                        "◆"
+                    } else {
+                        "◇"
+                    };
                     spans.push(Span::styled(
-                        format!("{}{} ", symbol, &block.hash_short[..block.hash_short.len().min(7)]),
+                        format!(
+                            "{}{} ",
+                            symbol,
+                            &block.hash_short[..block.hash_short.len().min(7)]
+                        ),
                         style,
                     ));
                 } else {
@@ -78,20 +108,21 @@ fn render_visualizer(frame: &mut Frame, area: Rect, app: &App) {
             let mut conn_spans: Vec<Span> = Vec::new();
             conn_spans.push(Span::raw(" "));
             for _ in 0..visible_cols.len() {
-                conn_spans.push(Span::styled("────────→ ", Style::default().fg(Color::DarkGray)));
+                conn_spans.push(Span::styled(
+                    "────────→ ",
+                    Style::default().fg(Color::DarkGray),
+                ));
             }
             lines.push(Line::from(conn_spans));
         }
     }
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(Span::styled(
-            " DAG Visualizer (◆ = selected parent chain) ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
+    let block = Block::default().borders(Borders::ALL).title(Span::styled(
+        " DAG Visualizer (◆ = selected parent chain) ",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ));
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
@@ -147,14 +178,12 @@ fn render_metrics(frame: &mut Frame, area: Rect, app: &App) {
         ))]
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(Span::styled(
-            " BlockDAG Metrics ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
+    let block = Block::default().borders(Borders::ALL).title(Span::styled(
+        " BlockDAG Metrics ",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ));
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
@@ -186,7 +215,11 @@ fn render_tips(frame: &mut Frame, area: Rect, app: &App) {
         vec![]
     };
 
-    let tips_border = if tips_focused { Color::Cyan } else { Color::White };
+    let tips_border = if tips_focused {
+        Color::Cyan
+    } else {
+        Color::White
+    };
     let tips_list = List::new(tip_items).block(
         Block::default()
             .borders(Borders::ALL)
@@ -219,7 +252,11 @@ fn render_tips(frame: &mut Frame, area: Rect, app: &App) {
         vec![]
     };
 
-    let parents_border = if parents_focused { Color::Cyan } else { Color::White };
+    let parents_border = if parents_focused {
+        Color::Cyan
+    } else {
+        Color::White
+    };
     let parents_list = List::new(parent_items).block(
         Block::default()
             .borders(Borders::ALL)
@@ -243,8 +280,11 @@ fn render_loading_popup(frame: &mut Frame, area: Rect) {
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
     frame.render_widget(Clear, popup_area);
-    let popup = Paragraph::new(" Loading block info...")
-        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Yellow)));
+    let popup = Paragraph::new(" Loading block info...").block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow)),
+    );
     frame.render_widget(popup, popup_area);
 }
 

@@ -1,13 +1,29 @@
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Row, Table, Wrap};
-use ratatui::Frame;
 
 use crate::app::App;
 use crate::rpc::types::sompi_to_kas;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+    if app.is_node_syncing() {
+        let block = Block::default().borders(Borders::ALL).title(Span::styled(
+            " Mempool ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+        let msg = Paragraph::new(Line::from(Span::styled(
+            " Node is syncing... Mempool data will be available once synced.",
+            Style::default().fg(Color::Yellow),
+        )))
+        .block(block);
+        frame.render_widget(msg, area);
+        return;
+    }
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(5), Constraint::Min(0)])
@@ -29,7 +45,9 @@ fn render_summary(frame: &mut Frame, area: Rect, app: &App) {
                 Span::styled(" Total Entries:  ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     mempool.entry_count.to_string(),
-                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
                 ),
             ]),
             Line::from(vec![
@@ -48,14 +66,12 @@ fn render_summary(frame: &mut Frame, area: Rect, app: &App) {
         ))]
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(Span::styled(
-            " Mempool Summary ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
+    let block = Block::default().borders(Borders::ALL).title(Span::styled(
+        " Mempool Summary ",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ));
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
@@ -88,7 +104,11 @@ fn render_table(frame: &mut Frame, area: Rect, app: &App) {
             .skip(scroll_offset)
             .map(|(i, entry)| {
                 let id = if entry.transaction_id.len() > 20 {
-                    format!("{}...{}", &entry.transaction_id[..10], &entry.transaction_id[entry.transaction_id.len()-10..])
+                    format!(
+                        "{}...{}",
+                        &entry.transaction_id[..10],
+                        &entry.transaction_id[entry.transaction_id.len() - 10..]
+                    )
                 } else {
                     entry.transaction_id.clone()
                 };
@@ -125,14 +145,12 @@ fn render_table(frame: &mut Frame, area: Rect, app: &App) {
     )
     .header(header)
     .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(Span::styled(
-                " Entries (↑↓ select, Enter details, Esc close) ",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )),
+        Block::default().borders(Borders::ALL).title(Span::styled(
+            " Entries (↑↓ select, Enter details, Esc close) ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
     );
 
     frame.render_widget(table, area);

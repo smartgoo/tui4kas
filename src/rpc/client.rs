@@ -77,6 +77,7 @@ impl RpcManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn start_polling(&mut self, interval: Duration) {
         if let Some(handle) = self.poll_handle.take() {
             handle.abort();
@@ -96,18 +97,27 @@ impl RpcManager {
         }));
     }
 
+    /// Start polling from an Arc reference (used when polling is deferred until after connection).
+    pub fn start_polling_shared(self: &Arc<Self>, interval: Duration, app_state: Arc<Mutex<App>>) {
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            loop {
+                ticker.tick().await;
+                if !app_state.lock().await.paused {
+                    Self::poll_once(&client, &app_state).await;
+                }
+            }
+        });
+    }
+
     async fn poll_once(client: &KaspaRpcClient, state: &Arc<Mutex<App>>) {
         let start = std::time::Instant::now();
 
-        let (server_info, dag_info, mempool, supply, fee_estimate) = tokio::join!(
-            client.get_server_info(),
-            client.get_block_dag_info(),
-            client.get_mempool_entries(true, false),
-            client.get_coin_supply(),
-            client.get_fee_estimate(),
-        );
+        // Check if daemon is active and not yet synced — only poll server_info
+        let is_daemon_syncing = state.lock().await.is_node_syncing();
 
-        let poll_duration_ms = start.elapsed().as_secs_f64() * 1000.0;
+        let server_info = client.get_server_info().await;
 
         let mut app = state.lock().await;
         let mut errors: Vec<String> = Vec::new();
@@ -116,43 +126,66 @@ impl RpcManager {
             Ok(v) => app.server_info = Some(v.into()),
             Err(e) => errors.push(format!("server_info: {}", e)),
         }
-        match dag_info {
-            Ok(v) => {
-                let info: crate::rpc::types::DagInfo = v.into();
-                app.dag_visualizer.update(&info.tip_hashes, &info.virtual_parent_hashes);
-                app.dag_info = Some(info);
+
+        // Release lock before making remaining RPC calls
+        drop(app);
+
+        if !is_daemon_syncing {
+            let (dag_info, mempool, supply, fee_estimate) = tokio::join!(
+                client.get_block_dag_info(),
+                client.get_mempool_entries(true, false),
+                client.get_coin_supply(),
+                client.get_fee_estimate(),
+            );
+
+            let mut app = state.lock().await;
+
+            match dag_info {
+                Ok(v) => {
+                    let info: crate::rpc::types::DagInfo = v.into();
+                    app.dag_visualizer
+                        .update(&info.tip_hashes, &info.virtual_parent_hashes);
+                    app.dag_info = Some(info);
+                }
+                Err(e) => errors.push(format!("dag_info: {}", e)),
             }
-            Err(e) => errors.push(format!("dag_info: {}", e)),
-        }
-        match mempool {
-            Ok(v) => app.mempool_state = Some(v.into()),
-            Err(e) => errors.push(format!("mempool: {}", e)),
-        }
-        match supply {
-            Ok(v) => app.coin_supply = Some(v.into()),
-            Err(e) => errors.push(format!("coin_supply: {}", e)),
-        }
-        match fee_estimate {
-            Ok(v) => app.fee_estimate = Some(v.into()),
-            Err(e) => errors.push(format!("fee_estimate: {}", e)),
-        }
+            match mempool {
+                Ok(v) => app.mempool_state = Some(v.into()),
+                Err(e) => errors.push(format!("mempool: {}", e)),
+            }
+            match supply {
+                Ok(v) => app.coin_supply = Some(v.into()),
+                Err(e) => errors.push(format!("coin_supply: {}", e)),
+            }
+            match fee_estimate {
+                Ok(v) => app.fee_estimate = Some(v.into()),
+                Err(e) => errors.push(format!("fee_estimate: {}", e)),
+            }
 
-        if app.node_url.is_none() {
             app.node_url = client.url();
-        }
-        if app.node_uid.is_none()
-            && let Some(desc) = client.node_descriptor()
-        {
-            app.node_uid = Some(desc.uid.clone());
-        }
+            if let Some(desc) = client.node_descriptor() {
+                app.node_uid = Some(desc.uid.clone());
+            }
 
-        app.last_refresh = Some(std::time::Instant::now());
-        app.last_poll_duration_ms = Some(poll_duration_ms);
-        app.last_error = if errors.is_empty() {
-            None
+            let poll_duration_ms = start.elapsed().as_secs_f64() * 1000.0;
+            app.last_refresh = Some(std::time::Instant::now());
+            app.last_poll_duration_ms = Some(poll_duration_ms);
+            app.last_error = if errors.is_empty() {
+                None
+            } else {
+                Some(errors.join("; "))
+            };
         } else {
-            Some(errors.join("; "))
-        };
+            let mut app = state.lock().await;
+            let poll_duration_ms = start.elapsed().as_secs_f64() * 1000.0;
+            app.last_refresh = Some(std::time::Instant::now());
+            app.last_poll_duration_ms = Some(poll_duration_ms);
+            app.last_error = if errors.is_empty() {
+                None
+            } else {
+                Some(errors.join("; "))
+            };
+        }
     }
 
     pub async fn execute_rpc_call(&self, method: &str) -> Result<String> {
@@ -211,10 +244,10 @@ impl RpcManager {
             }
             "estimate_network_hashes_per_second" => {
                 let dag = self.client.get_block_dag_info().await?;
-                let r = self.client.estimate_network_hashes_per_second(
-                    1000,
-                    Some(dag.sink),
-                ).await?;
+                let r = self
+                    .client
+                    .estimate_network_hashes_per_second(1000, Some(dag.sink))
+                    .await?;
                 Ok(format!("Estimated network hash rate: {} hashes/second", r))
             }
             "get_headers" => {
@@ -230,11 +263,10 @@ impl RpcManager {
             }
             "get_virtual_chain" => {
                 let dag = self.client.get_block_dag_info().await?;
-                let r = self.client.get_virtual_chain_from_block(
-                    dag.pruning_point_hash,
-                    false,
-                    None,
-                ).await?;
+                let r = self
+                    .client
+                    .get_virtual_chain_from_block(dag.pruning_point_hash, false, None)
+                    .await?;
                 Ok(format!(
                     "Removed chain blocks: {}\nAdded chain blocks: {}\nAccepted transaction IDs: {}",
                     r.removed_chain_block_hashes.len(),
@@ -248,7 +280,10 @@ impl RpcManager {
                 let elapsed = start.elapsed();
                 Ok(format!("Pong! ({:.2}ms)", elapsed.as_secs_f64() * 1000.0))
             }
-            _ => Err(anyhow::anyhow!("Unknown command: '{}'. Type 'help' for available commands.", method)),
+            _ => Err(anyhow::anyhow!(
+                "Unknown command: '{}'. Type 'help' for available commands.",
+                method
+            )),
         }
     }
 
@@ -258,21 +293,24 @@ impl RpcManager {
         let dag = self.client.get_block_dag_info().await?;
 
         // Estimate hashrate
-        let hashrate = self.client.estimate_network_hashes_per_second(
-            1000,
-            Some(dag.sink),
-        ).await.unwrap_or(0) as f64;
+        let hashrate = self
+            .client
+            .estimate_network_hashes_per_second(1000, Some(dag.sink))
+            .await
+            .unwrap_or(0) as f64;
 
         // Get virtual chain to find recent blocks
-        let vspc = self.client.get_virtual_chain_from_block(
-            dag.pruning_point_hash,
-            false,
-            None,
-        ).await?;
+        let vspc = self
+            .client
+            .get_virtual_chain_from_block(dag.pruning_point_hash, false, None)
+            .await?;
 
         // Sample the last N blocks from the chain
         let sample_size = 100.min(vspc.added_chain_block_hashes.len());
-        let start = vspc.added_chain_block_hashes.len().saturating_sub(sample_size);
+        let start = vspc
+            .added_chain_block_hashes
+            .len()
+            .saturating_sub(sample_size);
         let sample_hashes = &vspc.added_chain_block_hashes[start..];
 
         let mut miner_counts: HashMap<String, usize> = HashMap::new();
@@ -283,14 +321,11 @@ impl RpcManager {
                 if let Some(coinbase) = block.transactions.first() {
                     // Miner address is typically in the first output
                     if let Some(output) = coinbase.outputs.first()
-                        && let Some(ref verbose) = output.verbose_data {
-                            let addr = verbose.script_public_key_address.to_string();
-                            let short_addr = if addr.len() > 16 {
-                                format!("{}...{}", &addr[..10], &addr[addr.len()-6..])
-                            } else {
-                                addr.clone()
-                            };
-                            *miner_counts.entry(short_addr).or_insert(0) += 1;
+                        && let Some(ref verbose) = output.verbose_data
+                    {
+                        let addr = verbose.script_public_key_address.to_string();
+                        let short_addr = crate::rpc::types::shorten_address(&addr, 10, 6);
+                        *miner_counts.entry(short_addr).or_insert(0) += 1;
                     }
                 }
             }
@@ -315,15 +350,17 @@ impl RpcManager {
         let dag = self.client.get_block_dag_info().await?;
 
         // Get virtual chain
-        let vspc = self.client.get_virtual_chain_from_block(
-            dag.pruning_point_hash,
-            true,
-            None,
-        ).await?;
+        let vspc = self
+            .client
+            .get_virtual_chain_from_block(dag.pruning_point_hash, true, None)
+            .await?;
 
         // Sample recent blocks
         let sample_size = 50.min(vspc.added_chain_block_hashes.len());
-        let start = vspc.added_chain_block_hashes.len().saturating_sub(sample_size);
+        let start = vspc
+            .added_chain_block_hashes
+            .len()
+            .saturating_sub(sample_size);
         let sample_hashes = &vspc.added_chain_block_hashes[start..];
 
         let mut total_fees: u64 = 0;
@@ -336,7 +373,9 @@ impl RpcManager {
         for hash in sample_hashes {
             if let Ok(block) = self.client.get_block(*hash, true).await {
                 for (i, tx) in block.transactions.iter().enumerate() {
-                    if i == 0 { continue; } // skip coinbase
+                    if i == 0 {
+                        continue;
+                    } // skip coinbase
                     total_transactions += 1;
 
                     // Extract fee from mass via verbose data
@@ -354,11 +393,7 @@ impl RpcManager {
                     for output in &tx.outputs {
                         if let Some(ref verbose) = output.verbose_data {
                             let addr = verbose.script_public_key_address.to_string();
-                            let short = if addr.len() > 16 {
-                                format!("{}...{}", &addr[..10], &addr[addr.len()-6..])
-                            } else {
-                                addr
-                            };
+                            let short = crate::rpc::types::shorten_address(&addr, 10, 6);
                             *receiver_counts.entry(short).or_insert(0) += 1;
                         }
                     }
@@ -366,11 +401,21 @@ impl RpcManager {
             }
         }
 
-        let avg_fee = if fee_count > 0 { total_fees as f64 / fee_count as f64 } else { 0.0 };
-        if min_fee == u64::MAX { min_fee = 0; }
+        let avg_fee = if fee_count > 0 {
+            total_fees as f64 / fee_count as f64
+        } else {
+            0.0
+        };
+        if min_fee == u64::MAX {
+            min_fee = 0;
+        }
 
-        let mut top_receivers: Vec<_> = receiver_counts.into_iter()
-            .map(|(a, c)| crate::rpc::types::AddressActivity { address: a, tx_count: c })
+        let mut top_receivers: Vec<_> = receiver_counts
+            .into_iter()
+            .map(|(a, c)| crate::rpc::types::AddressActivity {
+                address: a,
+                tx_count: c,
+            })
             .collect();
         top_receivers.sort_by(|a, b| b.tx_count.cmp(&a.tx_count));
         top_receivers.truncate(10);

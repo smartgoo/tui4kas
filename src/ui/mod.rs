@@ -3,6 +3,7 @@ mod blockdag;
 mod command;
 mod common;
 mod dashboard;
+mod integrated_node;
 mod mempool;
 mod rpc_explorer;
 
@@ -20,8 +21,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),              // header
-            Constraint::Min(0),                 // main content
+            Constraint::Length(3),                // header
+            Constraint::Min(0),                   // main content
             Constraint::Length(cmd_input_height), // command input
         ])
         .split(frame.area());
@@ -38,6 +39,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             Tab::BlockDag => blockdag::render(frame, chunks[1], app),
             Tab::Analytics => analytics::render(frame, chunks[1], app),
             Tab::RpcExplorer => rpc_explorer::render(frame, chunks[1], app),
+            Tab::IntegratedNode => integrated_node::render(frame, chunks[1], app),
         }
     }
 

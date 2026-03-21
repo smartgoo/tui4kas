@@ -33,9 +33,12 @@ mod tests {
     fn cli_custom_values() {
         let args = CliArgs::parse_from([
             "tui4kas",
-            "--url", "ws://127.0.0.1:17110",
-            "--network", "testnet-10",
-            "--refresh-interval-ms", "500",
+            "--url",
+            "ws://127.0.0.1:17110",
+            "--network",
+            "testnet-10",
+            "--refresh-interval-ms",
+            "500",
         ]);
         assert_eq!(args.url, Some("ws://127.0.0.1:17110".to_string()));
         assert_eq!(args.network, "testnet-10");
@@ -46,9 +49,12 @@ mod tests {
     fn cli_short_flags() {
         let args = CliArgs::parse_from([
             "tui4kas",
-            "-u", "ws://localhost:17110",
-            "-n", "testnet-11",
-            "-r", "2000",
+            "-u",
+            "ws://localhost:17110",
+            "-n",
+            "testnet-11",
+            "-r",
+            "2000",
         ]);
         assert_eq!(args.url, Some("ws://localhost:17110".to_string()));
         assert_eq!(args.network, "testnet-11");

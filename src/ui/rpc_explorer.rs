@@ -1,12 +1,28 @@
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
-use ratatui::Frame;
 
 use crate::app::App;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+    if app.is_node_syncing() {
+        let block = Block::default().borders(Borders::ALL).title(Span::styled(
+            " RPC Cmds ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+        let msg = Paragraph::new(Line::from(Span::styled(
+            " Node is syncing... RPC Cmds will be available once synced.",
+            Style::default().fg(Color::Yellow),
+        )))
+        .block(block);
+        frame.render_widget(msg, area);
+        return;
+    }
+
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(30), Constraint::Min(0)])
@@ -45,14 +61,12 @@ fn render_method_list(frame: &mut Frame, area: Rect, app: &App) {
         .collect();
 
     let list = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(Span::styled(
-                " RPC Methods ",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )),
+        Block::default().borders(Borders::ALL).title(Span::styled(
+            " RPC Methods ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
     );
 
     frame.render_widget(list, area);
@@ -68,21 +82,22 @@ fn render_response(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     let scroll_hint = if app.rpc_explorer.scroll_offset > 0 {
-        format!(" Response (line {} | j/k scroll, J/K fast, PgUp/PgDn, Home) ", app.rpc_explorer.scroll_offset)
+        format!(
+            " Response (line {} | j/k scroll, J/K fast, PgUp/PgDn, Home) ",
+            app.rpc_explorer.scroll_offset
+        )
     } else {
         " Response (j/k to scroll) ".to_string()
     };
 
     let paragraph = Paragraph::new(content)
         .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(Span::styled(
-                    scroll_hint,
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                )),
+            Block::default().borders(Borders::ALL).title(Span::styled(
+                scroll_hint,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
         )
         .wrap(Wrap { trim: false })
         .scroll((app.rpc_explorer.scroll_offset as u16, 0));

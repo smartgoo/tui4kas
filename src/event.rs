@@ -1,5 +1,5 @@
-use std::time::Duration;
 use crossterm::event::{self, Event, KeyEvent};
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 #[allow(dead_code)]

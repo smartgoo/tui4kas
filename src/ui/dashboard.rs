@@ -1,11 +1,11 @@
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
-use ratatui::Frame;
 
 use crate::app::App;
-use crate::rpc::types::sompi_to_kas;
+use crate::rpc::types::{format_number, sompi_to_kas};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let rows = Layout::default()
@@ -53,16 +53,20 @@ fn render_node_info(frame: &mut Frame, area: Rect, app: &App) {
             ]),
             Line::from(vec![
                 Span::styled(" Synced:      ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    if info.is_synced { "Yes" } else { "No" },
-                    synced_style,
-                ),
+                Span::styled(if info.is_synced { "Yes" } else { "No" }, synced_style),
             ]),
             Line::from(vec![
                 Span::styled(" UTXO Index:  ", Style::default().fg(Color::DarkGray)),
                 Span::raw(if info.has_utxo_index { "Yes" } else { "No" }),
             ]),
         ];
+
+        if app.is_daemon_active() {
+            lines.push(Line::from(vec![
+                Span::styled(" Mode:        ", Style::default().fg(Color::DarkGray)),
+                Span::styled("Embedded Node", Style::default().fg(Color::Green)),
+            ]));
+        }
 
         if let Some(ref url) = app.node_url {
             lines.push(Line::from(vec![
@@ -85,20 +89,44 @@ fn render_node_info(frame: &mut Frame, area: Rect, app: &App) {
         ))]
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(Span::styled(
-            " Node Info ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
+    let block = Block::default().borders(Borders::ALL).title(Span::styled(
+        " Node Info ",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ));
 
     let paragraph = Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, area);
 }
 
 fn render_network_stats(frame: &mut Frame, area: Rect, app: &App) {
+    if app.is_node_syncing() {
+        let daa = app
+            .server_info
+            .as_ref()
+            .map(|s| format_number(s.virtual_daa_score))
+            .unwrap_or_default();
+        let lines = vec![
+            Line::from(Span::styled(
+                " Node is syncing...",
+                Style::default().fg(Color::Yellow),
+            )),
+            Line::from(vec![
+                Span::styled(" DAA Score:      ", Style::default().fg(Color::DarkGray)),
+                Span::raw(daa),
+            ]),
+        ];
+        let block = Block::default().borders(Borders::ALL).title(Span::styled(
+            " Network Stats ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+        frame.render_widget(Paragraph::new(lines).block(block), area);
+        return;
+    }
+
     let mut lines = if let Some(ref dag) = app.dag_info {
         vec![
             Line::from(vec![
@@ -153,14 +181,12 @@ fn render_network_stats(frame: &mut Frame, area: Rect, app: &App) {
         ]));
     }
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(Span::styled(
-            " Network Stats ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
+    let block = Block::default().borders(Borders::ALL).title(Span::styled(
+        " Network Stats ",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ));
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
@@ -172,14 +198,20 @@ fn render_markets(frame: &mut Frame, area: Rect, app: &App) {
         } else {
             Color::Red
         };
-        let change_prefix = if market.price_change_24h_pct >= 0.0 { "+" } else { "" };
+        let change_prefix = if market.price_change_24h_pct >= 0.0 {
+            "+"
+        } else {
+            ""
+        };
 
         vec![
             Line::from(vec![
                 Span::styled(" Price (USD):   ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     format!("${:.6}", market.price_usd),
-                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("  "),
                 Span::styled(
@@ -207,19 +239,33 @@ fn render_markets(frame: &mut Frame, area: Rect, app: &App) {
         ))]
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(Span::styled(
-            " Markets ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
+    let block = Block::default().borders(Borders::ALL).title(Span::styled(
+        " Markets ",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ));
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn render_mining_info(frame: &mut Frame, area: Rect, app: &App) {
+    if app.is_node_syncing() {
+        let block = Block::default().borders(Borders::ALL).title(Span::styled(
+            " Mining Info ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+        let msg = Paragraph::new(Line::from(Span::styled(
+            " Node is syncing...",
+            Style::default().fg(Color::Yellow),
+        )))
+        .block(block);
+        frame.render_widget(msg, area);
+        return;
+    }
+
     let lines = if let Some(ref mining) = app.mining_info {
         let hashrate_str = format_hashrate(mining.hashrate);
         let mut lines = vec![
@@ -227,12 +273,17 @@ fn render_mining_info(frame: &mut Frame, area: Rect, app: &App) {
                 Span::styled(" Hashrate:        ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     hashrate_str,
-                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
                 ),
             ]),
             Line::from(vec![
                 Span::styled(" Unique Miners:   ", Style::default().fg(Color::DarkGray)),
-                Span::raw(format!("{} (last {} blocks)", mining.unique_miners, mining.blocks_analyzed)),
+                Span::raw(format!(
+                    "{} (last {} blocks)",
+                    mining.unique_miners, mining.blocks_analyzed
+                )),
             ]),
             Line::from(""),
             Line::from(Span::styled(
@@ -250,6 +301,11 @@ fn render_mining_info(frame: &mut Frame, area: Rect, app: &App) {
         }
 
         lines
+    } else if !app.has_direct_node {
+        vec![Line::from(Span::styled(
+            " Disabled when using Kaspa PNN via Resolver",
+            Style::default().fg(Color::DarkGray),
+        ))]
     } else {
         vec![Line::from(Span::styled(
             " Collecting mining data...",
@@ -257,14 +313,12 @@ fn render_mining_info(frame: &mut Frame, area: Rect, app: &App) {
         ))]
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(Span::styled(
-            " Mining Info ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
+    let block = Block::default().borders(Borders::ALL).title(Span::styled(
+        " Mining Info ",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ));
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
@@ -300,6 +354,22 @@ fn format_usd(value: f64) -> String {
 }
 
 fn render_mempool_summary(frame: &mut Frame, area: Rect, app: &App) {
+    if app.is_node_syncing() {
+        let block = Block::default().borders(Borders::ALL).title(Span::styled(
+            " Mempool & Fees ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+        let msg = Paragraph::new(Line::from(Span::styled(
+            " Node is syncing...",
+            Style::default().fg(Color::Yellow),
+        )))
+        .block(block);
+        frame.render_widget(msg, area);
+        return;
+    }
+
     let mut lines = Vec::new();
 
     if let Some(ref mempool) = app.mempool_state {
@@ -338,33 +408,20 @@ fn render_mempool_summary(frame: &mut Frame, area: Rect, app: &App) {
         }
     }
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(Span::styled(
-            " Mempool & Fees ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
+    let block = Block::default().borders(Borders::ALL).title(Span::styled(
+        " Mempool & Fees ",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ));
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
-}
-
-fn format_number(n: u64) -> String {
-    let s = n.to_string();
-    let mut result = String::new();
-    for (i, c) in s.chars().rev().enumerate() {
-        if i > 0 && i % 3 == 0 {
-            result.push(',');
-        }
-        result.push(c);
-    }
-    result.chars().rev().collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rpc::types::format_number;
 
     #[test]
     fn format_number_zero() {

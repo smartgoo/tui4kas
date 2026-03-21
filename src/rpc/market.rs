@@ -7,8 +7,7 @@ use tokio::sync::Mutex;
 use crate::app::App;
 use crate::rpc::types::MarketData;
 
-const COINGECKO_URL: &str =
-    "https://api.coingecko.com/api/v3/simple/price?ids=kaspa&vs_currencies=usd,btc&include_market_cap=true&include_24hr_vol=true&include_24hr_change=true";
+const COINGECKO_URL: &str = "https://api.coingecko.com/api/v3/simple/price?ids=kaspa&vs_currencies=usd,btc&include_market_cap=true&include_24hr_vol=true&include_24hr_change=true";
 
 #[derive(Debug, Deserialize)]
 struct CoinGeckoResponse {
@@ -28,11 +27,15 @@ pub fn start_market_polling(app_state: Arc<Mutex<App>>, interval: Duration) {
     tokio::spawn(async move {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
+            .user_agent("tui4kas")
             .build()
             .unwrap();
         let mut ticker = tokio::time::interval(interval);
         loop {
             ticker.tick().await;
+            if app_state.lock().await.paused {
+                continue;
+            }
             if let Ok(data) = fetch_market_data(&client).await {
                 let mut app = app_state.lock().await;
                 app.market_data = Some(data);

@@ -1,3 +1,4 @@
+use crate::config::DaemonConfig;
 use crate::rpc::types::*;
 
 #[derive(Debug, Clone)]
@@ -32,7 +33,8 @@ impl DagVisualizer {
         if !blocks.is_empty() {
             // Only add if tips changed from last column
             let should_add = self.columns.last().is_none_or(|last| {
-                let last_hashes: Vec<&str> = last.blocks.iter().map(|b| b.hash_short.as_str()).collect();
+                let last_hashes: Vec<&str> =
+                    last.blocks.iter().map(|b| b.hash_short.as_str()).collect();
                 let new_hashes: Vec<&str> = blocks.iter().map(|b| b.hash_short.as_str()).collect();
                 last_hashes != new_hashes
             });
@@ -62,10 +64,20 @@ pub enum Tab {
     BlockDag,
     Analytics,
     RpcExplorer,
+    IntegratedNode,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 5] = [Tab::Dashboard, Tab::Mempool, Tab::BlockDag, Tab::Analytics, Tab::RpcExplorer];
+    pub fn all() -> &'static [Tab] {
+        &[
+            Tab::Dashboard,
+            Tab::Mempool,
+            Tab::BlockDag,
+            Tab::Analytics,
+            Tab::RpcExplorer,
+            Tab::IntegratedNode,
+        ]
+    }
 
     pub fn title(&self) -> &'static str {
         match self {
@@ -73,8 +85,56 @@ impl Tab {
             Tab::Mempool => "Mempool",
             Tab::BlockDag => "BlockDAG",
             Tab::Analytics => "Analytics",
-            Tab::RpcExplorer => "RPC Explorer",
+            Tab::RpcExplorer => "RPC Cmds",
+            Tab::IntegratedNode => "Embedded Node",
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DaemonStatus {
+    Stopped,
+    Starting,
+    Running,
+    Stopping,
+    Error(String),
+}
+
+pub struct IntegratedNodeState {
+    pub config: DaemonConfig,
+    pub status: DaemonStatus,
+    pub selected_field: usize,
+    pub editing: bool,
+    pub edit_buffer: String,
+    pub log_lines: Vec<String>,
+    pub log_scroll: usize,
+    pub log_auto_scroll: bool,
+    pub started_at: Option<std::time::Instant>,
+    pub status_message: Option<(String, bool)>, // (message, is_error)
+}
+
+impl IntegratedNodeState {
+    pub fn new(config: DaemonConfig) -> Self {
+        Self {
+            config,
+            status: DaemonStatus::Stopped,
+            selected_field: 0,
+            editing: false,
+            edit_buffer: String::new(),
+            log_lines: Vec::new(),
+            log_scroll: 0,
+            log_auto_scroll: true,
+            started_at: None,
+            status_message: None,
+        }
+    }
+
+    pub fn field_count() -> usize {
+        8 // network, utxo_index, ram_scale, app_dir, log_level, async_threads, auto_start_daemon, [Start]
+    }
+
+    pub fn is_running(&self) -> bool {
+        matches!(self.status, DaemonStatus::Running | DaemonStatus::Starting)
     }
 }
 
@@ -143,7 +203,6 @@ pub struct CommandOutput {
     pub result: String,
     pub is_error: bool,
 }
-
 
 impl CommandLine {
     pub fn activate(&mut self) {
@@ -289,7 +348,10 @@ impl CommandLine {
             ("get_mempool_entries", "Get mempool entries"),
             ("get_coin_supply", "Get coin supply"),
             ("get_fee_estimate", "Get fee estimate"),
-            ("get_fee_estimate_experimental", "Get experimental fee estimate (verbose)"),
+            (
+                "get_fee_estimate_experimental",
+                "Get experimental fee estimate (verbose)",
+            ),
             ("get_connected_peer_info", "Get connected peer info"),
             ("get_peer_addresses", "Get known peer addresses"),
             ("get_current_network", "Get current network type"),
@@ -299,7 +361,10 @@ impl CommandLine {
             ("get_headers", "Get header count"),
             ("get_sync_status", "Get sync status"),
             ("get_virtual_chain", "Get virtual selected parent chain"),
-            ("estimate_network_hashes_per_second", "Estimate network hashrate"),
+            (
+                "estimate_network_hashes_per_second",
+                "Estimate network hashrate",
+            ),
             ("ping", "Ping the node"),
         ]
     }
@@ -345,10 +410,16 @@ pub struct App {
 
     // Pause polling
     pub paused: bool,
+
+    // Whether mining/analytics data is available (direct node or embedded daemon)
+    pub has_direct_node: bool,
+
+    // Integrated node tab state
+    pub integrated_node: IntegratedNodeState,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(daemon_config: DaemonConfig) -> Self {
         Self {
             active_tab: Tab::Dashboard,
             connection_status: ConnectionStatus::Disconnected,
@@ -377,25 +448,42 @@ impl App {
             dag_block_loading: false,
             dag_visualizer: DagVisualizer::default(),
             paused: false,
+            has_direct_node: false,
+            integrated_node: IntegratedNodeState::new(daemon_config),
         }
     }
 
+    pub fn is_daemon_active(&self) -> bool {
+        matches!(self.integrated_node.status, DaemonStatus::Running)
+    }
+
+    pub fn is_node_syncing(&self) -> bool {
+        self.is_daemon_active()
+            && !self
+                .server_info
+                .as_ref()
+                .is_some_and(|s| s.is_synced)
+    }
+
     pub fn tab_index(&self) -> usize {
-        Tab::ALL.iter().position(|t| *t == self.active_tab).unwrap_or(0)
+        Tab::all()
+            .iter()
+            .position(|t| *t == self.active_tab)
+            .unwrap_or(0)
     }
 
     pub fn next_tab(&mut self) {
-        let idx = (self.tab_index() + 1) % Tab::ALL.len();
-        self.active_tab = Tab::ALL[idx];
+        let idx = (self.tab_index() + 1) % Tab::all().len();
+        self.active_tab = Tab::all()[idx];
     }
 
     pub fn prev_tab(&mut self) {
         let idx = if self.tab_index() == 0 {
-            Tab::ALL.len() - 1
+            Tab::all().len() - 1
         } else {
             self.tab_index() - 1
         };
-        self.active_tab = Tab::ALL[idx];
+        self.active_tab = Tab::all()[idx];
     }
 }
 
@@ -412,13 +500,13 @@ mod tests {
         assert_eq!(Tab::Mempool.title(), "Mempool");
         assert_eq!(Tab::BlockDag.title(), "BlockDAG");
         assert_eq!(Tab::Analytics.title(), "Analytics");
-        assert_eq!(Tab::RpcExplorer.title(), "RPC Explorer");
+        assert_eq!(Tab::RpcExplorer.title(), "RPC Cmds");
     }
 
     #[test]
     fn tab_index_matches_all_order() {
-        let mut app = App::new();
-        for (i, tab) in Tab::ALL.iter().enumerate() {
+        let mut app = App::new(DaemonConfig::default());
+        for (i, tab) in Tab::all().iter().enumerate() {
             app.active_tab = *tab;
             assert_eq!(app.tab_index(), i);
         }
@@ -426,7 +514,7 @@ mod tests {
 
     #[test]
     fn next_tab_cycles_forward() {
-        let mut app = App::new();
+        let mut app = App::new(DaemonConfig::default());
         assert_eq!(app.active_tab, Tab::Dashboard);
         app.next_tab();
         assert_eq!(app.active_tab, Tab::Mempool);
@@ -437,16 +525,25 @@ mod tests {
         app.next_tab();
         assert_eq!(app.active_tab, Tab::RpcExplorer);
         app.next_tab();
-        assert_eq!(app.active_tab, Tab::Dashboard); // wraps
+        // With daemon feature, next is IntegratedNode; without, wraps to Dashboard
+        let last = *Tab::all().last().unwrap();
+        if last == Tab::RpcExplorer {
+            assert_eq!(app.active_tab, Tab::Dashboard); // wraps
+        } else {
+            assert_eq!(app.active_tab, last);
+            app.next_tab();
+            assert_eq!(app.active_tab, Tab::Dashboard); // wraps
+        }
     }
 
     #[test]
     fn prev_tab_cycles_backward() {
-        let mut app = App::new();
+        let mut app = App::new(DaemonConfig::default());
         app.prev_tab();
-        assert_eq!(app.active_tab, Tab::RpcExplorer); // wraps from 0
-        app.prev_tab();
-        assert_eq!(app.active_tab, Tab::Analytics);
+        let last = *Tab::all().last().unwrap();
+        assert_eq!(app.active_tab, last); // wraps from 0
+        // Navigate back a couple
+        app.active_tab = Tab::Analytics;
         app.prev_tab();
         assert_eq!(app.active_tab, Tab::BlockDag);
     }
@@ -743,8 +840,16 @@ mod tests {
         assert!(state.available_methods.contains(&"get_info"));
         assert!(state.available_methods.contains(&"get_peer_addresses"));
         assert!(state.available_methods.contains(&"get_current_network"));
-        assert!(state.available_methods.contains(&"get_fee_estimate_experimental"));
-        assert!(state.available_methods.contains(&"estimate_network_hashes_per_second"));
+        assert!(
+            state
+                .available_methods
+                .contains(&"get_fee_estimate_experimental")
+        );
+        assert!(
+            state
+                .available_methods
+                .contains(&"estimate_network_hashes_per_second")
+        );
     }
 
     // --- DagVisualizer ---
