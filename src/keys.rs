@@ -141,12 +141,14 @@ pub fn handle_normal_keys(
         (KeyCode::Tab, _) => { app.next_tab(); }
         (KeyCode::BackTab, _) => { app.prev_tab(); }
         (KeyCode::Char('1'), _) => { app.active_tab = Tab::Dashboard; }
-        (KeyCode::Char('2'), _) => { app.active_tab = Tab::Mempool; }
-        (KeyCode::Char('3'), _) => { app.active_tab = Tab::BlockDag; }
-        (KeyCode::Char('4'), _) => { app.active_tab = Tab::Analytics; }
-        (KeyCode::Char('5'), _) => { app.active_tab = Tab::RpcExplorer; }
-        (KeyCode::Char('6'), _) => { app.active_tab = Tab::IntegratedNode; }
+        (KeyCode::Char('2'), _) => { app.active_tab = Tab::Mining; }
+        (KeyCode::Char('3'), _) => { app.active_tab = Tab::Mempool; }
+        (KeyCode::Char('4'), _) => { app.active_tab = Tab::BlockDag; }
+        (KeyCode::Char('5'), _) => { app.active_tab = Tab::Analytics; }
+        (KeyCode::Char('6'), _) => { app.active_tab = Tab::RpcExplorer; }
+        (KeyCode::Char('7'), _) => { app.active_tab = Tab::IntegratedNode; }
         _ => match app.active_tab {
+            Tab::Mining => handle_mining_keys(app, key.code),
             Tab::RpcExplorer => handle_rpc_explorer_keys(app, key.code, rpc, app_state),
             Tab::Mempool => handle_mempool_keys(app, key.code),
             Tab::BlockDag => handle_blockdag_keys(app, key.code, rpc, app_state),
@@ -193,6 +195,10 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
                     }
                 }
             }
+            Tab::Mining => {
+                let scroll = app.mining_tab.scroll_mut();
+                *scroll = scroll.saturating_add(3);
+            }
             Tab::RpcExplorer => {
                 app.rpc_explorer.scroll_offset = app.rpc_explorer.scroll_offset.saturating_add(3);
             }
@@ -216,6 +222,10 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
                         app.dag_selection.parent_selected = app.dag_selection.parent_selected.saturating_sub(1);
                     }
                 }
+            }
+            Tab::Mining => {
+                let scroll = app.mining_tab.scroll_mut();
+                *scroll = scroll.saturating_sub(3);
             }
             Tab::RpcExplorer => {
                 app.rpc_explorer.scroll_offset = app.rpc_explorer.scroll_offset.saturating_sub(3);
@@ -250,6 +260,32 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
 pub enum DaemonCommand {
     Start(Box<DaemonConfig>),
     Stop,
+}
+
+pub fn handle_mining_keys(app: &mut App, key: KeyCode) {
+    match key {
+        KeyCode::Left | KeyCode::Char('h') => {
+            app.mining_tab.active_panel = app.mining_tab.active_panel.prev();
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            app.mining_tab.active_panel = app.mining_tab.active_panel.next();
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            let scroll = app.mining_tab.scroll_mut();
+            *scroll = scroll.saturating_sub(1);
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            let scroll = app.mining_tab.scroll_mut();
+            *scroll = scroll.saturating_add(1);
+        }
+        KeyCode::Home | KeyCode::Char('g') => {
+            *app.mining_tab.scroll_mut() = 0;
+        }
+        KeyCode::End | KeyCode::Char('G') => {
+            *app.mining_tab.scroll_mut() = usize::MAX;
+        }
+        _ => {}
+    }
 }
 
 pub fn handle_rpc_explorer_keys(

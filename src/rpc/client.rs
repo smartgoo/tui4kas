@@ -314,6 +314,8 @@ impl RpcManager {
         let sample_hashes = &vspc.added_chain_block_hashes[start..];
 
         let mut miner_counts: HashMap<String, usize> = HashMap::new();
+        let mut pool_counts: HashMap<String, usize> = HashMap::new();
+        let mut version_counts: HashMap<String, usize> = HashMap::new();
 
         // Fetch blocks in parallel (10 concurrent)
         let hashes: Vec<_> = sample_hashes.to_vec();
@@ -338,19 +340,36 @@ impl RpcManager {
                     let short_addr = crate::rpc::types::shorten_address(&addr, 10, 6);
                     *miner_counts.entry(short_addr).or_insert(0) += 1;
                 }
+
+                // Parse coinbase payload for pool and version info
+                let payload = coinbase.payload.as_slice();
+                let cb_info = crate::rpc::types::parse_coinbase_payload(payload);
+                if let Some(pool) = cb_info.pool_name {
+                    *pool_counts.entry(pool).or_insert(0) += 1;
+                }
+                if let Some(version) = cb_info.node_version {
+                    *version_counts.entry(version).or_insert(0) += 1;
+                }
             }
         }
 
         let unique_miners = miner_counts.len();
-        let mut top_miners: Vec<(String, usize)> = miner_counts.into_iter().collect();
-        top_miners.sort_by(|a, b| b.1.cmp(&a.1));
-        top_miners.truncate(5);
+        let mut all_miners: Vec<(String, usize)> = miner_counts.into_iter().collect();
+        all_miners.sort_by(|a, b| b.1.cmp(&a.1));
+
+        let mut pools: Vec<(String, usize)> = pool_counts.into_iter().collect();
+        pools.sort_by(|a, b| b.1.cmp(&a.1));
+
+        let mut node_versions: Vec<(String, usize)> = version_counts.into_iter().collect();
+        node_versions.sort_by(|a, b| b.1.cmp(&a.1));
 
         Ok(crate::rpc::types::MiningInfo {
             hashrate,
             unique_miners,
-            top_miners,
+            all_miners,
             blocks_analyzed: sample_size,
+            pools,
+            node_versions,
         })
     }
 

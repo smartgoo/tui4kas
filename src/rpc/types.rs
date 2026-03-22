@@ -174,8 +174,82 @@ pub fn shorten_address(addr: &str, prefix_len: usize, suffix_len: usize) -> Stri
 pub struct MiningInfo {
     pub hashrate: f64,
     pub unique_miners: usize,
-    pub top_miners: Vec<(String, usize)>,
+    pub all_miners: Vec<(String, usize)>,
     pub blocks_analyzed: usize,
+    pub pools: Vec<(String, usize)>,
+    pub node_versions: Vec<(String, usize)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CoinbaseInfo {
+    pub node_version: Option<String>,
+    pub pool_name: Option<String>,
+}
+
+pub fn parse_coinbase_payload(payload: &[u8]) -> CoinbaseInfo {
+    let none = CoinbaseInfo {
+        node_version: None,
+        pool_name: None,
+    };
+
+    if payload.len() < 19 {
+        return none;
+    }
+
+    let script_len = payload[18] as usize;
+    let data_start = 19 + script_len;
+
+    if data_start >= payload.len() {
+        return none;
+    }
+
+    // Check for address-style payload (0xaa first byte in script)
+    if script_len > 0 && payload[19] == 0xaa {
+        return none;
+    }
+
+    let payload_str: String = payload[data_start..]
+        .iter()
+        .map(|&b| b as char)
+        .collect();
+    let payload_str = payload_str.trim_matches('\0').trim();
+
+    if payload_str.is_empty() {
+        return none;
+    }
+
+    let parts: Vec<&str> = payload_str.splitn(3, '/').collect();
+    let node_version = parts
+        .first()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let pool_name = parts
+        .get(1)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    CoinbaseInfo {
+        node_version,
+        pool_name,
+    }
+}
+
+pub fn format_hashrate(hps: f64) -> String {
+    if hps >= 1e18 {
+        format!("{:.2} EH/s", hps / 1e18)
+    } else if hps >= 1e15 {
+        format!("{:.2} PH/s", hps / 1e15)
+    } else if hps >= 1e12 {
+        format!("{:.2} TH/s", hps / 1e12)
+    } else if hps >= 1e9 {
+        format!("{:.2} GH/s", hps / 1e9)
+    } else if hps >= 1e6 {
+        format!("{:.2} MH/s", hps / 1e6)
+    } else if hps >= 1e3 {
+        format!("{:.2} KH/s", hps / 1e3)
+    } else {
+        format!("{:.2} H/s", hps)
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -435,5 +509,69 @@ mod tests {
         assert!(result.contains("..."));
         assert!(result.starts_with("kaspa:abcd"));
         assert!(result.ends_with("456789"));
+    }
+
+    // --- parse_coinbase_payload ---
+
+    #[test]
+    fn parse_coinbase_payload_too_short() {
+        let info = parse_coinbase_payload(&[0u8; 10]);
+        assert!(info.node_version.is_none());
+        assert!(info.pool_name.is_none());
+    }
+
+    #[test]
+    fn parse_coinbase_payload_version_and_pool() {
+        // 19 bytes of header + script_len=0 at byte 18 + "0.14.1/MyPool/"
+        let mut payload = vec![0u8; 18];
+        payload.push(0); // script_len = 0
+        payload.extend_from_slice(b"0.14.1/MyPool/extra");
+        let info = parse_coinbase_payload(&payload);
+        assert_eq!(info.node_version.as_deref(), Some("0.14.1"));
+        assert_eq!(info.pool_name.as_deref(), Some("MyPool"));
+    }
+
+    #[test]
+    fn parse_coinbase_payload_version_only() {
+        let mut payload = vec![0u8; 18];
+        payload.push(0);
+        payload.extend_from_slice(b"0.14.1");
+        let info = parse_coinbase_payload(&payload);
+        assert_eq!(info.node_version.as_deref(), Some("0.14.1"));
+        assert!(info.pool_name.is_none());
+    }
+
+    #[test]
+    fn parse_coinbase_payload_with_script() {
+        let mut payload = vec![0u8; 18];
+        payload.push(3); // script_len = 3
+        payload.extend_from_slice(&[0x01, 0x02, 0x03]); // script bytes
+        payload.extend_from_slice(b"0.13.2/PoolX");
+        let info = parse_coinbase_payload(&payload);
+        assert_eq!(info.node_version.as_deref(), Some("0.13.2"));
+        assert_eq!(info.pool_name.as_deref(), Some("PoolX"));
+    }
+
+    #[test]
+    fn parse_coinbase_payload_aa_script() {
+        let mut payload = vec![0u8; 18];
+        payload.push(2); // script_len = 2
+        payload.extend_from_slice(&[0xaa, 0x01]); // 0xaa first byte
+        payload.extend_from_slice(b"0.14.1/Pool");
+        let info = parse_coinbase_payload(&payload);
+        assert!(info.node_version.is_none());
+        assert!(info.pool_name.is_none());
+    }
+
+    // --- format_hashrate ---
+
+    #[test]
+    fn format_hashrate_terahash() {
+        assert_eq!(format_hashrate(1.5e12), "1.50 TH/s");
+    }
+
+    #[test]
+    fn format_hashrate_petahash() {
+        assert_eq!(format_hashrate(2.0e15), "2.00 PH/s");
     }
 }

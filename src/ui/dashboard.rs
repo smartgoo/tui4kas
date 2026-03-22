@@ -10,11 +10,7 @@ use crate::rpc::types::{format_number, sompi_to_kas};
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(35),
-            Constraint::Percentage(35),
-            Constraint::Percentage(30),
-        ])
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
 
     let top = Layout::default()
@@ -22,16 +18,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(rows[0]);
 
-    let middle = Layout::default()
+    let bottom = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(rows[1]);
 
     render_node_info(frame, top[0], app);
     render_network_stats(frame, top[1], app);
-    render_markets(frame, middle[0], app);
-    render_mempool_summary(frame, middle[1], app);
-    render_mining_info(frame, rows[2], app);
+    render_markets(frame, bottom[0], app);
+    render_mempool_summary(frame, bottom[1], app);
 }
 
 fn render_node_info(frame: &mut Frame, area: Rect, app: &App) {
@@ -249,98 +244,6 @@ fn render_markets(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-fn render_mining_info(frame: &mut Frame, area: Rect, app: &App) {
-    if app.is_node_syncing() {
-        let block = Block::default().borders(Borders::ALL).title(Span::styled(
-            " Mining Info ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
-        let msg = Paragraph::new(Line::from(Span::styled(
-            " Node is syncing...",
-            Style::default().fg(Color::Yellow),
-        )))
-        .block(block);
-        frame.render_widget(msg, area);
-        return;
-    }
-
-    let lines = if let Some(ref mining) = app.node.mining_info {
-        let hashrate_str = format_hashrate(mining.hashrate);
-        let mut lines = vec![
-            Line::from(vec![
-                Span::styled(" Hashrate:        ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    hashrate_str,
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled(" Unique Miners:   ", Style::default().fg(Color::DarkGray)),
-                Span::raw(format!(
-                    "{} (last {} blocks)",
-                    mining.unique_miners, mining.blocks_analyzed
-                )),
-            ]),
-            Line::from(""),
-            Line::from(Span::styled(
-                " Top Miners:",
-                Style::default().fg(Color::DarkGray),
-            )),
-        ];
-
-        for (addr, count) in &mining.top_miners {
-            lines.push(Line::from(vec![
-                Span::raw("   "),
-                Span::styled(addr, Style::default().fg(Color::White)),
-                Span::raw(format!("  ({} blocks)", count)),
-            ]));
-        }
-
-        lines
-    } else if !app.has_direct_node {
-        vec![Line::from(Span::styled(
-            " Disabled when using Kaspa PNN via Resolver",
-            Style::default().fg(Color::DarkGray),
-        ))]
-    } else {
-        vec![Line::from(Span::styled(
-            " Collecting mining data...",
-            Style::default().fg(Color::DarkGray),
-        ))]
-    };
-
-    let block = Block::default().borders(Borders::ALL).title(Span::styled(
-        " Mining Info ",
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    ));
-
-    frame.render_widget(Paragraph::new(lines).block(block), area);
-}
-
-fn format_hashrate(hps: f64) -> String {
-    if hps >= 1e18 {
-        format!("{:.2} EH/s", hps / 1e18)
-    } else if hps >= 1e15 {
-        format!("{:.2} PH/s", hps / 1e15)
-    } else if hps >= 1e12 {
-        format!("{:.2} TH/s", hps / 1e12)
-    } else if hps >= 1e9 {
-        format!("{:.2} GH/s", hps / 1e9)
-    } else if hps >= 1e6 {
-        format!("{:.2} MH/s", hps / 1e6)
-    } else if hps >= 1e3 {
-        format!("{:.2} KH/s", hps / 1e3)
-    } else {
-        format!("{:.2} H/s", hps)
-    }
-}
-
 fn format_usd(value: f64) -> String {
     if value >= 1_000_000_000.0 {
         format!("${:.2}B", value / 1_000_000_000.0)
@@ -473,30 +376,4 @@ mod tests {
         assert_eq!(format_usd(42.50), "$42.50");
     }
 
-    // --- format_hashrate ---
-
-    #[test]
-    fn format_hashrate_ph() {
-        assert_eq!(format_hashrate(1.5e15), "1.50 PH/s");
-    }
-
-    #[test]
-    fn format_hashrate_th() {
-        assert_eq!(format_hashrate(500e12), "500.00 TH/s");
-    }
-
-    #[test]
-    fn format_hashrate_gh() {
-        assert_eq!(format_hashrate(2.5e9), "2.50 GH/s");
-    }
-
-    #[test]
-    fn format_hashrate_mh() {
-        assert_eq!(format_hashrate(100e6), "100.00 MH/s");
-    }
-
-    #[test]
-    fn format_hashrate_small() {
-        assert_eq!(format_hashrate(500.0), "500.00 H/s");
-    }
 }

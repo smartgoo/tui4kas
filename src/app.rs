@@ -146,6 +146,7 @@ pub enum DagFocus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Dashboard,
+    Mining,
     Mempool,
     BlockDag,
     Analytics,
@@ -157,6 +158,7 @@ impl Tab {
     pub fn all() -> &'static [Tab] {
         &[
             Tab::Dashboard,
+            Tab::Mining,
             Tab::Mempool,
             Tab::BlockDag,
             Tab::Analytics,
@@ -168,11 +170,56 @@ impl Tab {
     pub fn title(&self) -> &'static str {
         match self {
             Tab::Dashboard => "1:Dashboard",
-            Tab::Mempool => "2:Mempool",
-            Tab::BlockDag => "3:BlockDAG",
-            Tab::Analytics => "4:Analytics",
-            Tab::RpcExplorer => "5:RPC Cmds",
-            Tab::IntegratedNode => "6:Node",
+            Tab::Mining => "2:Mining",
+            Tab::Mempool => "3:Mempool",
+            Tab::BlockDag => "4:BlockDAG",
+            Tab::Analytics => "5:Analytics",
+            Tab::RpcExplorer => "6:RPC Cmds",
+            Tab::IntegratedNode => "7:Node",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MiningPanel {
+    #[default]
+    Miners,
+    Pools,
+    Versions,
+}
+
+impl MiningPanel {
+    pub fn next(self) -> Self {
+        match self {
+            MiningPanel::Miners => MiningPanel::Pools,
+            MiningPanel::Pools => MiningPanel::Versions,
+            MiningPanel::Versions => MiningPanel::Miners,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            MiningPanel::Miners => MiningPanel::Versions,
+            MiningPanel::Pools => MiningPanel::Miners,
+            MiningPanel::Versions => MiningPanel::Pools,
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct MiningTabState {
+    pub active_panel: MiningPanel,
+    pub miners_scroll: usize,
+    pub pools_scroll: usize,
+    pub versions_scroll: usize,
+}
+
+impl MiningTabState {
+    pub fn scroll_mut(&mut self) -> &mut usize {
+        match self.active_panel {
+            MiningPanel::Miners => &mut self.miners_scroll,
+            MiningPanel::Pools => &mut self.pools_scroll,
+            MiningPanel::Versions => &mut self.versions_scroll,
         }
     }
 }
@@ -543,6 +590,7 @@ pub struct App {
     pub dirty: bool,
     pub has_direct_node: bool,
 
+    pub mining_tab: MiningTabState,
     pub integrated_node: IntegratedNodeState,
 }
 
@@ -564,6 +612,7 @@ impl App {
             quit_confirm: false,
             dirty: true,
             has_direct_node: false,
+            mining_tab: MiningTabState::default(),
             integrated_node: IntegratedNodeState::new(daemon_config),
         }
     }
@@ -613,11 +662,12 @@ mod tests {
     #[test]
     fn tab_titles() {
         assert_eq!(Tab::Dashboard.title(), "1:Dashboard");
-        assert_eq!(Tab::Mempool.title(), "2:Mempool");
-        assert_eq!(Tab::BlockDag.title(), "3:BlockDAG");
-        assert_eq!(Tab::Analytics.title(), "4:Analytics");
-        assert_eq!(Tab::RpcExplorer.title(), "5:RPC Cmds");
-        assert_eq!(Tab::IntegratedNode.title(), "6:Node");
+        assert_eq!(Tab::Mining.title(), "2:Mining");
+        assert_eq!(Tab::Mempool.title(), "3:Mempool");
+        assert_eq!(Tab::BlockDag.title(), "4:BlockDAG");
+        assert_eq!(Tab::Analytics.title(), "5:Analytics");
+        assert_eq!(Tab::RpcExplorer.title(), "6:RPC Cmds");
+        assert_eq!(Tab::IntegratedNode.title(), "7:Node");
     }
 
     #[test]
@@ -633,6 +683,8 @@ mod tests {
     fn next_tab_cycles_forward() {
         let mut app = App::new(DaemonConfig::default());
         assert_eq!(app.active_tab, Tab::Dashboard);
+        app.next_tab();
+        assert_eq!(app.active_tab, Tab::Mining);
         app.next_tab();
         assert_eq!(app.active_tab, Tab::Mempool);
         app.next_tab();

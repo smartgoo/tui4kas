@@ -6,6 +6,7 @@ mod dashboard;
 mod help;
 mod integrated_node;
 mod mempool;
+mod mining;
 mod rpc_explorer;
 
 use ratatui::Frame;
@@ -36,6 +37,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     } else {
         match app.active_tab {
             Tab::Dashboard => dashboard::render(frame, chunks[1], app),
+            Tab::Mining => mining::render(frame, chunks[1], app),
             Tab::Mempool => mempool::render(frame, chunks[1], app),
             Tab::BlockDag => blockdag::render(frame, chunks[1], app),
             Tab::Analytics => analytics::render(frame, chunks[1], app),

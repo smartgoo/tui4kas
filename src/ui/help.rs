@@ -28,7 +28,7 @@ pub fn render_help(frame: &mut Frame, area: Rect, app: &App) {
     // Global keys
     lines.push(Line::from(Span::styled("Global", section_style)));
     let global_keys = [
-        ("1-6", "Switch to tab"),
+        ("1-7", "Switch to tab"),
         ("Tab/Shift+Tab", "Next/previous tab"),
         (":", "Open command line"),
         ("p", "Pause/resume polling"),
@@ -49,6 +49,14 @@ pub fn render_help(frame: &mut Frame, area: Rect, app: &App) {
     // Tab-specific keys
     let (section_name, tab_keys): (&str, Vec<(&str, &str)>) = match app.active_tab {
         Tab::Dashboard => ("Dashboard", vec![("(no extra keys)", "Read-only display")]),
+        Tab::Mining => (
+            "Mining",
+            vec![
+                ("h/l or Left/Right", "Switch panel"),
+                ("j/k or Up/Down", "Scroll list"),
+                ("g/G or Home/End", "Jump to first/last"),
+            ],
+        ),
         Tab::Mempool => (
             "Mempool",
             vec![
