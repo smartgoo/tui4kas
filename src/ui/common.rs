@@ -6,6 +6,27 @@ use ratatui::widgets::{Block, Borders, Paragraph, Tabs};
 
 use crate::app::{App, ConnectionStatus, Tab};
 
+/// Render a "Node is syncing..." placeholder for tabs that need a synced node.
+/// Returns `true` if the placeholder was rendered (caller should return early).
+pub fn render_syncing_guard(frame: &mut Frame, area: Rect, app: &App, title: &str) -> bool {
+    if !app.is_node_syncing() {
+        return false;
+    }
+    let block = Block::default().borders(Borders::ALL).title(Span::styled(
+        format!(" {} ", title),
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ));
+    let msg = Paragraph::new(Line::from(Span::styled(
+        format!(" Node is syncing... {} data will be available once synced.", title),
+        Style::default().fg(Color::Yellow),
+    )))
+    .block(block);
+    frame.render_widget(msg, area);
+    true
+}
+
 pub fn render_header(frame: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -26,7 +47,7 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &App) {
 
     frame.render_widget(tabs, chunks[0]);
 
-    let (status_text, status_color) = match &app.connection_status {
+    let (status_text, status_color) = match &app.node.connection_status {
         ConnectionStatus::Connected => ("Connected", Color::Green),
         ConnectionStatus::Connecting => ("Connecting...", Color::Yellow),
         ConnectionStatus::Disconnected => ("Disconnected", Color::Red),
@@ -36,7 +57,7 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &App) {
     let poll_text = if app.paused {
         String::from(" | Paused")
     } else {
-        app.last_poll_duration_ms
+        app.node.last_poll_duration_ms
             .map(|ms| format!(" | {:.0}ms", ms))
             .unwrap_or_default()
     };

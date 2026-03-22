@@ -5483,9 +5483,12 @@ name = "tui4kas"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bincode",
  "clap 4.6.0",
  "crossterm",
  "dirs",
+ "futures",
+ "indexmap 2.13.0",
  "kaspa-consensus-core",
  "kaspa-core",
  "kaspa-rpc-core",

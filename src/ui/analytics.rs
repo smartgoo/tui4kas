@@ -1,26 +1,18 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{
+    Axis, Bar, BarChart, BarGroup, Block, Borders, Chart, Dataset, Paragraph,
+};
 
-use crate::app::App;
-use crate::rpc::types::{format_number, sompi_to_kas};
+use crate::analytics::AggregatedView;
+use crate::app::{App, ViewMode};
+use crate::rpc::types::format_number;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
-    if app.is_node_syncing() {
-        let block = Block::default().borders(Borders::ALL).title(Span::styled(
-            " Analytics ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
-        let msg = Paragraph::new(Line::from(Span::styled(
-            " Node is syncing... Analytics will be available once synced.",
-            Style::default().fg(Color::Yellow),
-        )))
-        .block(block);
-        frame.render_widget(msg, area);
+    if super::common::render_syncing_guard(frame, area, app, "Analytics") {
         return;
     }
 
@@ -40,179 +32,514 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    // Determine available vertical space for banners vs panels
+    let mut banner_lines: Vec<Line> = Vec::new();
+
+    // Sync progress banner
+    if let Some((current, tip)) = app.analytics.sync_progress {
+        let pct = if tip > 0 {
+            (current as f64 / tip as f64 * 100.0).min(100.0)
+        } else {
+            0.0
+        };
+        banner_lines.push(Line::from(Span::styled(
+            format!(
+                " Syncing analytics... DAA {}/{} ({:.1}%)",
+                format_number(current),
+                format_number(tip),
+                pct
+            ),
+            Style::default().fg(Color::Yellow),
+        )));
+    }
+
+    // Reorg notification
+    if let Some(ref msg) = app.analytics.reorg_notification {
+        banner_lines.push(Line::from(Span::styled(
+            format!(" ⚠ {} (press Esc to dismiss)", msg),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )));
+    }
+
+    let main_area = if !banner_lines.is_empty() {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(banner_lines.len() as u16),
+                Constraint::Min(0),
+            ])
+            .split(area);
+        frame.render_widget(Paragraph::new(banner_lines), chunks[0]);
+        chunks[1]
+    } else {
+        area
+    };
+
+    // Use cached views (refreshed by analytics streaming task)
+    let default_views: [AggregatedView; 5] = Default::default();
+    let views = app.analytics.cached_views.as_ref().unwrap_or(&default_views);
+
+    // Layout: 3 rows, top 2 split into 2 columns, bottom full width
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(40),
-            Constraint::Percentage(30),
-            Constraint::Percentage(30),
+            Constraint::Percentage(33),
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
         ])
-        .split(area);
+        .split(main_area);
 
-    let top = Layout::default()
+    let top_cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(rows[0]);
 
-    render_fee_stats(frame, top[0], app);
-    render_tx_summary(frame, top[1], app);
-    render_address_list(
-        frame,
-        rows[1],
-        app,
-        "Most Active Senders (recent blocks)",
-        "No sender data available",
-        |a| &a.top_senders,
-    );
-    render_address_list(
-        frame,
-        rows[2],
-        app,
-        "Most Active Receivers (recent blocks)",
-        "No receiver data available",
-        |a| &a.top_receivers,
-    );
-}
+    let mid_cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(rows[1]);
 
-fn render_fee_stats(frame: &mut Frame, area: Rect, app: &App) {
-    let lines = if let Some(ref analytics) = app.analytics {
-        let fee = &analytics.fee_stats;
-        vec![
-            Line::from(vec![
-                Span::styled(" Avg Fee (mass):  ", Style::default().fg(Color::DarkGray)),
-                Span::raw(format!("{:.2}", fee.avg_fee_sompi)),
-            ]),
-            Line::from(vec![
-                Span::styled(" Total Fees:      ", Style::default().fg(Color::DarkGray)),
-                Span::raw(format!("{:.8} KAS", sompi_to_kas(fee.total_fees_sompi))),
-            ]),
-            Line::from(vec![
-                Span::styled(" Min Fee (mass):  ", Style::default().fg(Color::DarkGray)),
-                Span::raw(fee.min_fee_sompi.to_string()),
-            ]),
-            Line::from(vec![
-                Span::styled(" Max Fee (mass):  ", Style::default().fg(Color::DarkGray)),
-                Span::raw(fee.max_fee_sompi.to_string()),
-            ]),
-            Line::from(vec![
-                Span::styled(" Tx w/ Fee Data:  ", Style::default().fg(Color::DarkGray)),
-                Span::raw(fee.tx_count.to_string()),
-            ]),
-        ]
-    } else {
-        vec![Line::from(Span::styled(
-            " Collecting fee data...",
-            Style::default().fg(Color::DarkGray),
-        ))]
-    };
+    let panel_areas = [top_cols[0], top_cols[1], mid_cols[0], mid_cols[1], rows[2]];
 
-    let block = Block::default().borders(Borders::ALL).title(Span::styled(
-        " Fee Analysis ",
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    ));
+    let panel_names = [
+        "Fee Analysis",
+        "Tx Summary",
+        "Protocols",
+        "Top Senders",
+        "Top Receivers",
+    ];
 
-    frame.render_widget(Paragraph::new(lines).block(block), area);
-}
+    for (i, (&panel_area, name)) in panel_areas.iter().zip(panel_names.iter()).enumerate() {
+        let is_focused = app.analytics.focus == i;
+        let border_color = if is_focused {
+            Color::Cyan
+        } else {
+            Color::White
+        };
+        let tw = app.analytics.time_windows[i].label();
+        let vm = app.analytics.view_modes[i].label();
+        let title = format!(" {} [{}] [{}] ", name, tw, vm);
 
-fn render_tx_summary(frame: &mut Frame, area: Rect, app: &App) {
-    let lines = if let Some(ref analytics) = app.analytics {
-        vec![
-            Line::from(vec![
-                Span::styled(" Blocks Analyzed:   ", Style::default().fg(Color::DarkGray)),
-                Span::raw(format_number(analytics.blocks_analyzed as u64)),
-            ]),
-            Line::from(vec![
-                Span::styled(" Total Transactions:", Style::default().fg(Color::DarkGray)),
-                Span::raw(format!(
-                    " {}",
-                    format_number(analytics.total_transactions as u64)
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(border_color))
+            .title(Span::styled(
+                title,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ));
+
+        let inner = block.inner(panel_area);
+        frame.render_widget(block, panel_area);
+
+        if app.analytics.cached_views.is_none() {
+            frame.render_widget(
+                Paragraph::new(Span::styled(
+                    " Collecting data...",
+                    Style::default().fg(Color::DarkGray),
                 )),
-            ]),
-            Line::from(vec![
-                Span::styled(" Unique Senders:    ", Style::default().fg(Color::DarkGray)),
-                Span::raw(analytics.top_senders.len().to_string()),
-            ]),
-            Line::from(vec![
-                Span::styled(" Unique Receivers:  ", Style::default().fg(Color::DarkGray)),
-                Span::raw(analytics.top_receivers.len().to_string()),
-            ]),
-        ]
-    } else {
-        vec![Line::from(Span::styled(
-            " Collecting transaction data...",
-            Style::default().fg(Color::DarkGray),
-        ))]
-    };
+                inner,
+            );
+            continue;
+        }
 
-    let block = Block::default().borders(Borders::ALL).title(Span::styled(
-        " Transaction Summary ",
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    ));
-
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+        match (i, app.analytics.view_modes[i]) {
+            (0, ViewMode::Table) => render_fee_table(frame, inner, &views[0]),
+            (0, ViewMode::Chart) => render_fee_chart(frame, inner, &views[0]),
+            (1, ViewMode::Table) => render_tx_table(frame, inner, &views[1]),
+            (1, ViewMode::Chart) => render_tx_chart(frame, inner, &views[1]),
+            (2, ViewMode::Table) => render_protocol_table(frame, inner, &views[2]),
+            (2, ViewMode::Chart) => render_protocol_chart(frame, inner, &views[2]),
+            (3, ViewMode::Table) => render_address_table(frame, inner, &views[3], true),
+            (3, ViewMode::Chart) => render_address_chart(frame, inner, &views[3], "Senders"),
+            (4, ViewMode::Table) => render_address_table(frame, inner, &views[4], false),
+            (4, ViewMode::Chart) => render_address_chart(frame, inner, &views[4], "Receivers"),
+            _ => {}
+        }
+    }
 }
 
-fn render_address_list(
+// --- Table Renderers ---
+
+fn render_fee_table(frame: &mut Frame, area: Rect, view: &AggregatedView) {
+    let lines = vec![
+        Line::from(vec![
+            Span::styled(" Avg Fee (mass):  ", Style::default().fg(Color::DarkGray)),
+            Span::raw(format!("{:.2}", view.avg_fee)),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                " Total Fees:      ",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::raw(format_number(view.total_fees)),
+        ]),
+        Line::from(vec![
+            Span::styled(" Min Fee (mass):  ", Style::default().fg(Color::DarkGray)),
+            Span::raw(if view.fee_count > 0 {
+                view.min_fee.to_string()
+            } else {
+                "—".to_string()
+            }),
+        ]),
+        Line::from(vec![
+            Span::styled(" Max Fee (mass):  ", Style::default().fg(Color::DarkGray)),
+            Span::raw(if view.fee_count > 0 {
+                view.max_fee.to_string()
+            } else {
+                "—".to_string()
+            }),
+        ]),
+        Line::from(vec![
+            Span::styled(" Tx w/ Fee Data:  ", Style::default().fg(Color::DarkGray)),
+            Span::raw(format_number(view.fee_count as u64)),
+        ]),
+    ];
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn render_tx_table(frame: &mut Frame, area: Rect, view: &AggregatedView) {
+    let lines = vec![
+        Line::from(vec![
+            Span::styled(
+                " Time Periods:      ",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::raw(format_number(view.blocks_analyzed as u64)),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                " Total Transactions:",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::raw(format!(" {}", format_number(view.tx_count as u64))),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                " Unique Senders:    ",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::raw(
+                view.top_senders
+                    .len()
+                    .to_string(),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                " Unique Receivers:  ",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::raw(
+                view.top_receivers
+                    .len()
+                    .to_string(),
+            ),
+        ]),
+    ];
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn render_protocol_table(frame: &mut Frame, area: Rect, view: &AggregatedView) {
+    if view.protocol_counts.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                " No protocol activity detected",
+                Style::default().fg(Color::DarkGray),
+            )),
+            area,
+        );
+        return;
+    }
+
+    let mut lines = vec![Line::from(vec![
+        Span::styled(
+            "  Protocol",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("          "),
+        Span::styled(
+            "Txs",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])];
+
+    for (proto, count) in &view.protocol_counts {
+        lines.push(Line::from(vec![
+            Span::raw(format!("  {:<18} ", proto.label())),
+            Span::styled(
+                format_number(*count as u64),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
+
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn render_address_table(
     frame: &mut Frame,
     area: Rect,
-    app: &App,
-    title: &str,
-    empty_msg: &str,
-    get_entries: fn(&crate::rpc::types::AnalyticsData) -> &[crate::rpc::types::AddressActivity],
+    view: &AggregatedView,
+    is_senders: bool,
 ) {
-    let lines = if let Some(ref analytics) = app.analytics {
-        let entries = get_entries(analytics);
-        if entries.is_empty() {
-            vec![Line::from(Span::styled(
-                format!(" {}", empty_msg),
-                Style::default().fg(Color::DarkGray),
-            ))]
-        } else {
-            let mut lines = vec![Line::from(vec![
-                Span::styled(
-                    "  Address",
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("                                         "),
-                Span::styled(
-                    "Txs",
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ])];
-            for entry in entries {
-                lines.push(Line::from(vec![
-                    Span::raw(format!("  {:<45} ", entry.address)),
-                    Span::styled(
-                        entry.tx_count.to_string(),
-                        Style::default()
-                            .fg(Color::White)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-            }
-            lines
-        }
+    let entries = if is_senders {
+        &view.top_senders
     } else {
-        vec![Line::from(Span::styled(
-            " Collecting data...",
-            Style::default().fg(Color::DarkGray),
-        ))]
+        &view.top_receivers
     };
 
-    let block = Block::default().borders(Borders::ALL).title(Span::styled(
-        format!(" {} ", title),
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    ));
+    if entries.is_empty() {
+        let label = if is_senders { "sender" } else { "receiver" };
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                format!(" No {} data available", label),
+                Style::default().fg(Color::DarkGray),
+            )),
+            area,
+        );
+        return;
+    }
 
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    let mut lines = vec![Line::from(vec![
+        Span::styled(
+            "  Address",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("                                         "),
+        Span::styled(
+            "Txs",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])];
+
+    for (addr, count) in entries {
+        lines.push(Line::from(vec![
+            Span::raw(format!("  {:<45} ", addr)),
+            Span::styled(
+                format_number(*count as u64),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
+
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
+// --- Chart Renderers ---
+
+fn render_fee_chart(frame: &mut Frame, area: Rect, view: &AggregatedView) {
+    if view.fee_over_time.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                " No fee data for chart",
+                Style::default().fg(Color::DarkGray),
+            )),
+            area,
+        );
+        return;
+    }
+
+    let data = &view.fee_over_time;
+    let (x_min, x_max, y_min, y_max) = compute_bounds(data);
+
+    let dataset = Dataset::default()
+        .name("Avg Fee")
+        .marker(Marker::Braille)
+        .style(Style::default().fg(Color::Cyan))
+        .data(data);
+
+    let chart = Chart::new(vec![dataset])
+        .x_axis(
+            Axis::default()
+                .style(Style::default().fg(Color::DarkGray))
+                .bounds([x_min, x_max]),
+        )
+        .y_axis(
+            Axis::default()
+                .style(Style::default().fg(Color::DarkGray))
+                .bounds([y_min, y_max])
+                .labels(vec![
+                    Span::raw(format!("{:.0}", y_min)),
+                    Span::raw(format!("{:.0}", y_max)),
+                ]),
+        );
+
+    frame.render_widget(chart, area);
+}
+
+fn render_tx_chart(frame: &mut Frame, area: Rect, view: &AggregatedView) {
+    if view.tx_over_time.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                " No tx data for chart",
+                Style::default().fg(Color::DarkGray),
+            )),
+            area,
+        );
+        return;
+    }
+
+    let data = &view.tx_over_time;
+    let (x_min, x_max, y_min, y_max) = compute_bounds(data);
+
+    let dataset = Dataset::default()
+        .name("Tx Count")
+        .marker(Marker::Braille)
+        .style(Style::default().fg(Color::Green))
+        .data(data);
+
+    let chart = Chart::new(vec![dataset])
+        .x_axis(
+            Axis::default()
+                .style(Style::default().fg(Color::DarkGray))
+                .bounds([x_min, x_max]),
+        )
+        .y_axis(
+            Axis::default()
+                .style(Style::default().fg(Color::DarkGray))
+                .bounds([y_min, y_max])
+                .labels(vec![
+                    Span::raw(format!("{:.0}", y_min)),
+                    Span::raw(format!("{:.0}", y_max)),
+                ]),
+        );
+
+    frame.render_widget(chart, area);
+}
+
+fn render_protocol_chart(frame: &mut Frame, area: Rect, view: &AggregatedView) {
+    if view.protocol_counts.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                " No protocol data for chart",
+                Style::default().fg(Color::DarkGray),
+            )),
+            area,
+        );
+        return;
+    }
+
+    let colors = [
+        Color::Cyan,
+        Color::Green,
+        Color::Yellow,
+        Color::Magenta,
+        Color::Red,
+        Color::Blue,
+    ];
+
+    let bars: Vec<Bar> = view
+        .protocol_counts
+        .iter()
+        .enumerate()
+        .map(|(i, (proto, count))| {
+            Bar::default()
+                .label(proto.label().into())
+                .value(*count as u64)
+                .style(Style::default().fg(colors[i % colors.len()]))
+        })
+        .collect();
+
+    let bar_chart = BarChart::default()
+        .data(BarGroup::default().bars(&bars))
+        .bar_width(
+            (area.width as usize / (view.protocol_counts.len().max(1) + 1)).max(3) as u16,
+        )
+        .bar_gap(1);
+
+    frame.render_widget(bar_chart, area);
+}
+
+fn render_address_chart(frame: &mut Frame, area: Rect, view: &AggregatedView, label: &str) {
+    let entries = if label == "Senders" {
+        &view.top_senders
+    } else {
+        &view.top_receivers
+    };
+
+    if entries.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                format!(" No {} data for chart", label.to_lowercase()),
+                Style::default().fg(Color::DarkGray),
+            )),
+            area,
+        );
+        return;
+    }
+
+    let top10: Vec<_> = entries.iter().take(10).collect();
+
+    let bars: Vec<Bar> = top10
+        .iter()
+        .map(|(addr, count)| {
+            let short = if addr.len() > 12 {
+                format!("{}…", &addr[..11])
+            } else {
+                addr.clone()
+            };
+            Bar::default()
+                .label(short.into())
+                .value(*count as u64)
+                .style(Style::default().fg(Color::Cyan))
+        })
+        .collect();
+
+    let bar_chart = BarChart::default()
+        .data(BarGroup::default().bars(&bars))
+        .bar_width((area.width as usize / (top10.len().max(1) + 1)).max(3) as u16)
+        .bar_gap(1);
+
+    frame.render_widget(bar_chart, area);
+}
+
+// --- Helpers ---
+
+fn compute_bounds(data: &[(f64, f64)]) -> (f64, f64, f64, f64) {
+    let x_min = data
+        .iter()
+        .map(|(x, _)| *x)
+        .fold(f64::INFINITY, f64::min);
+    let x_max = data
+        .iter()
+        .map(|(x, _)| *x)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let y_min = data
+        .iter()
+        .map(|(_, y)| *y)
+        .fold(f64::INFINITY, f64::min);
+    let y_max = data
+        .iter()
+        .map(|(_, y)| *y)
+        .fold(f64::NEG_INFINITY, f64::max);
+
+    // Ensure non-zero ranges
+    let y_max = if (y_max - y_min).abs() < f64::EPSILON {
+        y_min + 1.0
+    } else {
+        y_max
+    };
+    let x_max = if (x_max - x_min).abs() < f64::EPSILON {
+        x_min + 1.0
+    } else {
+        x_max
+    };
+
+    (x_min, x_max, y_min, y_max)
 }

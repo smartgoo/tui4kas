@@ -1,8 +1,9 @@
 mod analytics;
 mod blockdag;
 mod command;
-mod common;
+pub(crate) mod common;
 mod dashboard;
+mod help;
 mod integrated_node;
 mod mempool;
 mod rpc_explorer;
@@ -44,4 +45,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
 
     command::render_input(frame, chunks[2], app);
+
+    // Help overlay on top of everything
+    if app.show_help {
+        help::render_help(frame, frame.area(), app);
+    }
 }

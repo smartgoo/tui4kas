@@ -77,9 +77,20 @@ fn parse_network(network: &str) -> (bool, u32, bool, bool) {
 fn build_kaspad_args(config: &DaemonConfig) -> KaspadArgs {
     let (testnet, testnet_suffix, devnet, simnet) = parse_network(&config.network);
 
+    // Parse peer lists from comma-separated strings
+    let connect_peers = DaemonConfig::parse_peers(&config.connect_peers)
+        .into_iter()
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    let add_peers = DaemonConfig::parse_peers(&config.add_peers)
+        .into_iter()
+        .filter_map(|s| s.parse().ok())
+        .collect();
+
     KaspadArgs {
         appdir: Some(config.app_dir.clone()),
         utxoindex: config.utxo_index,
+        archival: config.archival,
         ram_scale: config.ram_scale,
         testnet,
         testnet_suffix,
@@ -96,6 +107,28 @@ fn build_kaspad_args(config: &DaemonConfig) -> KaspadArgs {
         no_log_files: false,
         log_level: config.log_level.clone(),
         async_threads: config.async_threads,
+        // Networking
+        listen: config.listen.as_ref().and_then(|s| s.parse().ok()),
+        externalip: config.externalip.as_ref().and_then(|s| s.parse().ok()),
+        outbound_target: config.outbound_target,
+        inbound_limit: config.inbound_limit,
+        connect_peers,
+        add_peers,
+        disable_upnp: config.disable_upnp,
+        disable_dns_seeding: config.disable_dns_seed,
+        // Storage
+        reset_db: config.reset_db,
+        rpc_max_clients: config.rpc_max_clients,
+        rocksdb_preset: if config.rocksdb_preset.is_empty() || config.rocksdb_preset == "default" {
+            None
+        } else {
+            Some(config.rocksdb_preset.clone())
+        },
+        rocksdb_wal_dir: config.rocksdb_wal_dir.clone(),
+        rocksdb_cache_size: config.rocksdb_cache_size,
+        retention_period_days: config.retention_period_days,
+        // Performance
+        perf_metrics: config.perf_metrics,
         ..KaspadArgs::default()
     }
 }
@@ -109,37 +142,54 @@ fn init_file_logger(log_dir_path: &std::path::Path, log_level: &str) {
     let max_size: u64 = 100_000_000; // 100 MB
     let max_rolls: u32 = 8;
 
+    let Some(archive_str) = log_dir_path
+        .join("rusty-kaspa.log.{}.gz")
+        .to_str()
+        .map(|s| s.to_string())
+    else {
+        return;
+    };
+    let Some(err_archive_str) = log_dir_path
+        .join("rusty-kaspa_err.log.{}.gz")
+        .to_str()
+        .map(|s| s.to_string())
+    else {
+        return;
+    };
+
     // Main log file
     let log_file = log_dir_path.join("rusty-kaspa.log");
-    let archive_pattern = log_dir_path.join("rusty-kaspa.log.{}.gz");
     let trigger = Box::new(SizeTrigger::new(max_size));
-    let roller = Box::new(
-        FixedWindowRoller::builder()
-            .base(1)
-            .build(archive_pattern.to_str().unwrap(), max_rolls)
-            .unwrap(),
-    );
-    let policy = Box::new(CompoundPolicy::new(trigger, roller));
-    let log_appender = RollingFileAppender::builder()
+    let Ok(roller) = FixedWindowRoller::builder()
+        .base(1)
+        .build(&archive_str, max_rolls)
+    else {
+        return;
+    };
+    let policy = Box::new(CompoundPolicy::new(trigger, Box::new(roller)));
+    let Ok(log_appender) = RollingFileAppender::builder()
         .encoder(Box::new(PatternEncoder::new(log_pattern)))
         .build(log_file, policy)
-        .unwrap();
+    else {
+        return;
+    };
 
     // Error log file (WARN and above)
     let err_file = log_dir_path.join("rusty-kaspa_err.log");
-    let err_archive = log_dir_path.join("rusty-kaspa_err.log.{}.gz");
     let err_trigger = Box::new(SizeTrigger::new(max_size));
-    let err_roller = Box::new(
-        FixedWindowRoller::builder()
-            .base(1)
-            .build(err_archive.to_str().unwrap(), max_rolls)
-            .unwrap(),
-    );
-    let err_policy = Box::new(CompoundPolicy::new(err_trigger, err_roller));
-    let err_appender = RollingFileAppender::builder()
+    let Ok(err_roller) = FixedWindowRoller::builder()
+        .base(1)
+        .build(&err_archive_str, max_rolls)
+    else {
+        return;
+    };
+    let err_policy = Box::new(CompoundPolicy::new(err_trigger, Box::new(err_roller)));
+    let Ok(err_appender) = RollingFileAppender::builder()
         .encoder(Box::new(PatternEncoder::new(log_pattern)))
         .build(err_file, err_policy)
-        .unwrap();
+    else {
+        return;
+    };
 
     let level = match log_level.to_uppercase().as_str() {
         "TRACE" => LevelFilter::Trace,
@@ -150,7 +200,7 @@ fn init_file_logger(log_dir_path: &std::path::Path, log_level: &str) {
         _ => LevelFilter::Info,
     };
 
-    let config = Config::builder()
+    let Ok(config) = Config::builder()
         .appender(Appender::builder().build("log_file", Box::new(log_appender)))
         .appender(
             Appender::builder()
@@ -165,7 +215,9 @@ fn init_file_logger(log_dir_path: &std::path::Path, log_level: &str) {
                 .appender("err_log_file")
                 .build(level),
         )
-        .unwrap();
+    else {
+        return;
+    };
 
     // Use init_config (not init_config with handle) — if logger was already set, ignore
     let _ = log4rs::init_config(config);

@@ -1,9 +1,14 @@
+use std::collections::{HashSet, VecDeque};
+use std::sync::Arc;
+use std::time::Instant;
+
+use crate::analytics::{AggregatedView, AnalyticsEngine};
 use crate::config::DaemonConfig;
 use crate::rpc::types::*;
 
 #[derive(Debug, Clone)]
 pub struct DagVisualizerBlock {
-    pub hash_short: String,
+    pub hash_full: String,
     pub is_selected_parent: bool,
 }
 
@@ -14,39 +19,120 @@ pub struct DagVisualizerColumn {
 
 #[derive(Debug, Clone, Default)]
 pub struct DagVisualizer {
-    pub columns: Vec<DagVisualizerColumn>,
+    pub columns: VecDeque<DagVisualizerColumn>,
 }
 
 impl DagVisualizer {
     pub fn update(&mut self, tip_hashes: &[String], virtual_parents: &[String]) {
+        let parent_set: HashSet<&str> = virtual_parents.iter().map(|s| s.as_str()).collect();
         let blocks: Vec<DagVisualizerBlock> = tip_hashes
             .iter()
-            .map(|h| {
-                let short = if h.len() >= 8 { &h[..8] } else { h };
-                DagVisualizerBlock {
-                    hash_short: short.to_string(),
-                    is_selected_parent: virtual_parents.contains(h),
-                }
+            .map(|h| DagVisualizerBlock {
+                hash_full: h.clone(),
+                is_selected_parent: parent_set.contains(h.as_str()),
             })
             .collect();
 
         if !blocks.is_empty() {
-            // Only add if tips changed from last column
-            let should_add = self.columns.last().is_none_or(|last| {
+            // Only add if tips changed from last column (compare full hashes)
+            let should_add = self.columns.back().is_none_or(|last| {
                 let last_hashes: Vec<&str> =
-                    last.blocks.iter().map(|b| b.hash_short.as_str()).collect();
-                let new_hashes: Vec<&str> = blocks.iter().map(|b| b.hash_short.as_str()).collect();
+                    last.blocks.iter().map(|b| b.hash_full.as_str()).collect();
+                let new_hashes: Vec<&str> = blocks.iter().map(|b| b.hash_full.as_str()).collect();
                 last_hashes != new_hashes
             });
 
             if should_add {
-                self.columns.push(DagVisualizerColumn { blocks });
+                self.columns.push_back(DagVisualizerColumn { blocks });
                 // Keep last 30 columns
                 if self.columns.len() > 30 {
-                    self.columns.remove(0);
+                    self.columns.pop_front();
                 }
             }
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct DagSample {
+    pub timestamp: Instant,
+    pub blue_score: u64,
+    pub daa_score: u64,
+    pub block_count: u64,
+    pub header_count: u64,
+    pub tip_count: usize,
+    pub virtual_parent_count: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DagStats {
+    pub samples: VecDeque<DagSample>,
+    pub sink_blue_score: Option<u64>,
+}
+
+impl DagStats {
+    pub fn update(&mut self, dag_info: &DagInfo, blue_score: Option<u64>) {
+        self.sink_blue_score = blue_score;
+        self.samples.push_back(DagSample {
+            timestamp: Instant::now(),
+            blue_score: blue_score.unwrap_or(0),
+            daa_score: dag_info.virtual_daa_score,
+            block_count: dag_info.block_count,
+            header_count: dag_info.header_count,
+            tip_count: dag_info.tip_hashes.len(),
+            virtual_parent_count: dag_info.virtual_parent_hashes.len(),
+        });
+        while self.samples.len() > 120 {
+            self.samples.pop_front();
+        }
+    }
+
+    pub fn blue_block_rate(&self) -> Option<f64> {
+        if self.samples.len() < 2 {
+            return None;
+        }
+        let first = self.samples.front()?;
+        let last = self.samples.back()?;
+        let elapsed = last.timestamp.duration_since(first.timestamp).as_secs_f64();
+        if elapsed < 0.1 {
+            return None;
+        }
+        let delta = last.blue_score.saturating_sub(first.blue_score) as f64;
+        Some(delta / elapsed)
+    }
+
+    pub fn avg_dag_width(&self) -> Option<f64> {
+        if self.samples.is_empty() {
+            return None;
+        }
+        let sum: usize = self.samples.iter().map(|s| s.tip_count).sum();
+        Some(sum as f64 / self.samples.len() as f64)
+    }
+
+    pub fn block_interval_ms(&self) -> Option<f64> {
+        if self.samples.len() < 2 {
+            return None;
+        }
+        let first = self.samples.front()?;
+        let last = self.samples.back()?;
+        let delta = last.blue_score.saturating_sub(first.blue_score);
+        if delta == 0 {
+            return None;
+        }
+        let elapsed_ms = last.timestamp.duration_since(first.timestamp).as_secs_f64() * 1000.0;
+        Some(elapsed_ms / delta as f64)
+    }
+
+    pub fn blue_red_ratio(&self) -> Option<(usize, usize)> {
+        let last = self.samples.back()?;
+        let red = last.tip_count.saturating_sub(last.virtual_parent_count);
+        Some((last.virtual_parent_count, red))
+    }
+
+    pub fn headers_blocks_delta(&self) -> Option<u64> {
+        let last = self.samples.back()?;
+        Some(last.header_count.saturating_sub(last.block_count))
     }
 }
 
@@ -81,12 +167,61 @@ impl Tab {
 
     pub fn title(&self) -> &'static str {
         match self {
-            Tab::Dashboard => "Dashboard",
-            Tab::Mempool => "Mempool",
-            Tab::BlockDag => "BlockDAG",
-            Tab::Analytics => "Analytics",
-            Tab::RpcExplorer => "RPC Cmds",
-            Tab::IntegratedNode => "Embedded Node",
+            Tab::Dashboard => "1:Dashboard",
+            Tab::Mempool => "2:Mempool",
+            Tab::BlockDag => "3:BlockDAG",
+            Tab::Analytics => "4:Analytics",
+            Tab::RpcExplorer => "5:RPC Cmds",
+            Tab::IntegratedNode => "6:Node",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ViewMode {
+    #[default]
+    Table,
+    Chart,
+}
+
+impl ViewMode {
+    pub fn toggle(&mut self) {
+        *self = match self {
+            Self::Table => Self::Chart,
+            Self::Chart => Self::Table,
+        };
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Table => "Table",
+            Self::Chart => "Chart",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TimeWindow {
+    #[default]
+    OneMin,
+    OneHour,
+    TwentyFourHour,
+}
+
+impl TimeWindow {
+    pub fn cycle(&mut self) {
+        *self = match self {
+            Self::OneMin => Self::OneHour,
+            Self::OneHour => Self::TwentyFourHour,
+            Self::TwentyFourHour => Self::OneMin,
+        };
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::OneMin => "1m",
+            Self::OneHour => "1h",
+            Self::TwentyFourHour => "24h",
         }
     }
 }
@@ -106,7 +241,7 @@ pub struct IntegratedNodeState {
     pub selected_field: usize,
     pub editing: bool,
     pub edit_buffer: String,
-    pub log_lines: Vec<String>,
+    pub log_lines: VecDeque<String>,
     pub log_scroll: usize,
     pub log_auto_scroll: bool,
     pub started_at: Option<std::time::Instant>,
@@ -121,16 +256,12 @@ impl IntegratedNodeState {
             selected_field: 0,
             editing: false,
             edit_buffer: String::new(),
-            log_lines: Vec::new(),
+            log_lines: VecDeque::new(),
             log_scroll: 0,
             log_auto_scroll: true,
             started_at: None,
             status_message: None,
         }
-    }
-
-    pub fn field_count() -> usize {
-        8 // network, utxo_index, ram_scale, app_dir, log_level, async_threads, auto_start_daemon, [Start]
     }
 
     pub fn is_running(&self) -> bool {
@@ -139,12 +270,11 @@ impl IntegratedNodeState {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum ConnectionStatus {
     Disconnected,
     Connecting,
     Connected,
-    Error(String),
+    Error(#[allow(dead_code)] String),
 }
 
 pub struct RpcExplorerState {
@@ -159,26 +289,10 @@ impl Default for RpcExplorerState {
     fn default() -> Self {
         Self {
             selected_method: 0,
-            available_methods: vec![
-                "get_server_info",
-                "get_block_dag_info",
-                "get_block_count",
-                "get_mempool_entries",
-                "get_coin_supply",
-                "get_fee_estimate",
-                "get_fee_estimate_experimental",
-                "get_connected_peer_info",
-                "get_peer_addresses",
-                "get_current_network",
-                "get_sink",
-                "get_sink_blue_score",
-                "get_info",
-                "get_sync_status",
-                "get_virtual_chain",
-                "get_headers",
-                "estimate_network_hashes_per_second",
-                "ping",
-            ],
+            available_methods: crate::rpc::types::RPC_METHODS
+                .iter()
+                .map(|(name, _)| *name)
+                .collect(),
             last_response: None,
             is_loading: false,
             scroll_offset: 0,
@@ -191,9 +305,9 @@ pub struct CommandLine {
     pub active: bool,
     pub input: String,
     pub cursor_pos: usize,
-    pub output: Vec<CommandOutput>,
+    pub output: VecDeque<CommandOutput>,
     pub output_scroll: usize,
-    pub history: Vec<String>,
+    pub history: VecDeque<String>,
     pub history_index: Option<usize>,
     pub show_output: bool,
 }
@@ -315,9 +429,9 @@ impl CommandLine {
         if cmd.is_empty() {
             return None;
         }
-        self.history.push(cmd.clone());
+        self.history.push_back(cmd.clone());
         if self.history.len() > 100 {
-            self.history.remove(0);
+            self.history.pop_front();
         }
         self.history_index = None;
         self.input.clear();
@@ -326,95 +440,109 @@ impl CommandLine {
     }
 
     pub fn push_output(&mut self, command: String, result: String, is_error: bool) {
-        self.output.push(CommandOutput {
+        self.output.push_back(CommandOutput {
             command,
             result,
             is_error,
         });
         if self.output.len() > 50 {
-            self.output.remove(0);
+            self.output.pop_front();
         }
         self.output_scroll = 0;
         self.show_output = true;
     }
 
-    pub fn available_commands() -> &'static [(&'static str, &'static str)] {
-        &[
+    pub fn available_commands() -> Vec<(&'static str, &'static str)> {
+        let mut cmds = vec![
             ("help", "Show this help message"),
             ("clear", "Clear command output"),
-            ("get_server_info", "Get server info"),
-            ("get_block_dag_info", "Get block DAG info"),
-            ("get_block_count", "Get block count"),
-            ("get_mempool_entries", "Get mempool entries"),
-            ("get_coin_supply", "Get coin supply"),
-            ("get_fee_estimate", "Get fee estimate"),
-            (
-                "get_fee_estimate_experimental",
-                "Get experimental fee estimate (verbose)",
-            ),
-            ("get_connected_peer_info", "Get connected peer info"),
-            ("get_peer_addresses", "Get known peer addresses"),
-            ("get_current_network", "Get current network type"),
-            ("get_sink", "Get sink (virtual selected parent) hash"),
-            ("get_sink_blue_score", "Get sink blue score"),
-            ("get_info", "Get general node info"),
-            ("get_headers", "Get header count"),
-            ("get_sync_status", "Get sync status"),
-            ("get_virtual_chain", "Get virtual selected parent chain"),
-            (
-                "estimate_network_hashes_per_second",
-                "Estimate network hashrate",
-            ),
-            ("ping", "Ping the node"),
-        ]
+        ];
+        cmds.extend_from_slice(crate::rpc::types::RPC_METHODS);
+        cmds
     }
 }
 
-pub struct App {
-    pub active_tab: Tab,
-    pub connection_status: ConnectionStatus,
-    pub should_quit: bool,
-
+pub struct NodeState {
     pub server_info: Option<ServerInfo>,
     pub dag_info: Option<DagInfo>,
     pub mempool_state: Option<MempoolState>,
     pub coin_supply: Option<CoinSupplyInfo>,
     pub fee_estimate: Option<FeeEstimateInfo>,
-    pub market_data: Option<MarketData>,
     pub mining_info: Option<MiningInfo>,
-    pub analytics: Option<AnalyticsData>,
+    pub dag_visualizer: DagVisualizer,
+    pub dag_stats: DagStats,
+    pub sink_blue_score: Option<u64>,
+    pub node_url: Option<String>,
+    pub node_uid: Option<String>,
+    pub connection_status: ConnectionStatus,
+    pub last_refresh: Option<Instant>,
+    pub last_poll_duration_ms: Option<f64>,
+    pub last_error: Option<String>,
+}
+
+impl Default for NodeState {
+    fn default() -> Self {
+        Self {
+            server_info: None,
+            dag_info: None,
+            mempool_state: None,
+            coin_supply: None,
+            fee_estimate: None,
+            mining_info: None,
+            dag_visualizer: DagVisualizer::default(),
+            dag_stats: DagStats::default(),
+            sink_blue_score: None,
+            node_url: None,
+            node_uid: None,
+            connection_status: ConnectionStatus::Disconnected,
+            last_refresh: None,
+            last_poll_duration_ms: None,
+            last_error: None,
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct AnalyticsState {
+    pub engine: Option<Arc<tokio::sync::RwLock<AnalyticsEngine>>>,
+    pub focus: usize,
+    pub view_modes: [ViewMode; 5],
+    pub time_windows: [TimeWindow; 5],
+    pub sync_progress: Option<(u64, u64)>,
+    pub reorg_notification: Option<String>,
+    pub cached_views: Option<[AggregatedView; 5]>,
+}
+
+#[derive(Default)]
+pub struct DagSelection {
+    pub focus: DagFocus,
+    pub tip_selected: usize,
+    pub parent_selected: usize,
+    pub block_detail: Option<String>,
+    pub block_loading: bool,
+}
+
+pub struct App {
+    pub active_tab: Tab,
+    pub should_quit: bool,
+
+    pub node: NodeState,
+    pub analytics: AnalyticsState,
+    pub dag_selection: DagSelection,
+    pub market_data: Option<MarketData>,
 
     pub rpc_explorer: RpcExplorerState,
     pub command_line: CommandLine,
 
-    pub node_url: Option<String>,
-    pub node_uid: Option<String>,
-
-    pub last_error: Option<String>,
-    pub last_refresh: Option<std::time::Instant>,
-    pub last_poll_duration_ms: Option<f64>,
-
-    // Mempool table state
     pub mempool_selected: usize,
     pub mempool_detail: Option<String>,
 
-    // BlockDAG selection state
-    pub dag_focus: DagFocus,
-    pub dag_tip_selected: usize,
-    pub dag_parent_selected: usize,
-    pub dag_block_detail: Option<String>,
-    pub dag_block_loading: bool,
-
-    // DAG visualizer state - tracks recent tip snapshots for rendering
-    pub dag_visualizer: DagVisualizer,
-
-    // Pause polling
     pub paused: bool,
-
-    // Whether mining/analytics data is available (direct node or embedded daemon)
+    pub show_help: bool,
+    pub quit_confirm: bool,
+    pub dirty: bool,
     pub has_direct_node: bool,
 
-    // Integrated node tab state
     pub integrated_node: IntegratedNodeState,
 }
 
@@ -422,32 +550,19 @@ impl App {
     pub fn new(daemon_config: DaemonConfig) -> Self {
         Self {
             active_tab: Tab::Dashboard,
-            connection_status: ConnectionStatus::Disconnected,
             should_quit: false,
-            server_info: None,
-            dag_info: None,
-            mempool_state: None,
-            coin_supply: None,
-            fee_estimate: None,
+            node: NodeState::default(),
+            analytics: AnalyticsState::default(),
+            dag_selection: DagSelection::default(),
             market_data: None,
-            mining_info: None,
-            analytics: None,
             rpc_explorer: RpcExplorerState::default(),
             command_line: CommandLine::default(),
-            node_url: None,
-            node_uid: None,
-            last_error: None,
-            last_refresh: None,
-            last_poll_duration_ms: None,
             mempool_selected: 0,
             mempool_detail: None,
-            dag_focus: DagFocus::default(),
-            dag_tip_selected: 0,
-            dag_parent_selected: 0,
-            dag_block_detail: None,
-            dag_block_loading: false,
-            dag_visualizer: DagVisualizer::default(),
             paused: false,
+            show_help: false,
+            quit_confirm: false,
+            dirty: true,
             has_direct_node: false,
             integrated_node: IntegratedNodeState::new(daemon_config),
         }
@@ -460,6 +575,7 @@ impl App {
     pub fn is_node_syncing(&self) -> bool {
         self.is_daemon_active()
             && !self
+                .node
                 .server_info
                 .as_ref()
                 .is_some_and(|s| s.is_synced)
@@ -496,11 +612,12 @@ mod tests {
 
     #[test]
     fn tab_titles() {
-        assert_eq!(Tab::Dashboard.title(), "Dashboard");
-        assert_eq!(Tab::Mempool.title(), "Mempool");
-        assert_eq!(Tab::BlockDag.title(), "BlockDAG");
-        assert_eq!(Tab::Analytics.title(), "Analytics");
-        assert_eq!(Tab::RpcExplorer.title(), "RPC Cmds");
+        assert_eq!(Tab::Dashboard.title(), "1:Dashboard");
+        assert_eq!(Tab::Mempool.title(), "2:Mempool");
+        assert_eq!(Tab::BlockDag.title(), "3:BlockDAG");
+        assert_eq!(Tab::Analytics.title(), "4:Analytics");
+        assert_eq!(Tab::RpcExplorer.title(), "5:RPC Cmds");
+        assert_eq!(Tab::IntegratedNode.title(), "6:Node");
     }
 
     #[test]
@@ -701,7 +818,7 @@ mod tests {
     #[test]
     fn history_up_navigates() {
         let mut cl = CommandLine::default();
-        cl.history = vec!["first".to_string(), "second".to_string()];
+        cl.history = VecDeque::from(vec!["first".to_string(), "second".to_string()]);
         cl.history_up();
         assert_eq!(cl.input, "second");
         assert_eq!(cl.history_index, Some(1));
@@ -717,7 +834,7 @@ mod tests {
     #[test]
     fn history_down_restores_empty() {
         let mut cl = CommandLine::default();
-        cl.history = vec!["cmd".to_string()];
+        cl.history = VecDeque::from(vec!["cmd".to_string()]);
         cl.history_up();
         assert_eq!(cl.input, "cmd");
         cl.history_down();
@@ -758,7 +875,7 @@ mod tests {
         let mut cl = CommandLine::default();
         cl.input = "get_server_info".to_string();
         cl.submit();
-        assert_eq!(cl.history, vec!["get_server_info"]);
+        assert_eq!(cl.history, VecDeque::from(vec!["get_server_info".to_string()]));
     }
 
     #[test]
@@ -769,8 +886,8 @@ mod tests {
             cl.submit();
         }
         assert_eq!(cl.history.len(), 100);
-        assert_eq!(cl.history[0], "cmd5");
-        assert_eq!(cl.history[99], "cmd104");
+        assert_eq!(cl.history.front().unwrap(), "cmd5");
+        assert_eq!(cl.history.back().unwrap(), "cmd104");
     }
 
     // --- CommandLine: output ---
@@ -782,7 +899,7 @@ mod tests {
             cl.push_output(format!("cmd{}", i), "ok".to_string(), false);
         }
         assert_eq!(cl.output.len(), 50);
-        assert_eq!(cl.output[0].command, "cmd5");
+        assert_eq!(cl.output.front().unwrap().command, "cmd5");
     }
 
     #[test]
@@ -798,7 +915,7 @@ mod tests {
     fn push_output_tracks_errors() {
         let mut cl = CommandLine::default();
         cl.push_output("bad".to_string(), "fail".to_string(), true);
-        assert!(cl.output[0].is_error);
+        assert!(cl.output.front().unwrap().is_error);
     }
 
     // --- CommandLine: activate/deactivate ---
@@ -890,6 +1007,92 @@ mod tests {
             vis.update(&tips, &[]);
         }
         assert_eq!(vis.columns.len(), 30);
+    }
+
+    // --- DagStats ---
+
+    fn make_dag_info(tips: usize, parents: usize, blocks: u64, headers: u64) -> DagInfo {
+        DagInfo {
+            network: "mainnet".to_string(),
+            block_count: blocks,
+            header_count: headers,
+            tip_hashes: (0..tips).map(|i| format!("tip{}", i)).collect(),
+            difficulty: 1.0,
+            past_median_time: 0,
+            virtual_parent_hashes: (0..parents).map(|i| format!("tip{}", i)).collect(),
+            pruning_point_hash: "pruning".to_string(),
+            virtual_daa_score: 1000,
+            sink: "sink".to_string(),
+        }
+    }
+
+    #[test]
+    fn dag_stats_default_empty() {
+        let stats = DagStats::default();
+        assert!(stats.samples.is_empty());
+        assert!(stats.sink_blue_score.is_none());
+        assert!(stats.blue_block_rate().is_none());
+        assert!(stats.avg_dag_width().is_none());
+        assert!(stats.block_interval_ms().is_none());
+        assert!(stats.blue_red_ratio().is_none());
+        assert!(stats.headers_blocks_delta().is_none());
+    }
+
+    #[test]
+    fn dag_stats_update_adds_sample() {
+        let mut stats = DagStats::default();
+        let dag = make_dag_info(4, 3, 1000, 1010);
+        stats.update(&dag, Some(500));
+        assert_eq!(stats.samples.len(), 1);
+        assert_eq!(stats.sink_blue_score, Some(500));
+    }
+
+    #[test]
+    fn dag_stats_caps_at_120() {
+        let mut stats = DagStats::default();
+        let dag = make_dag_info(4, 3, 1000, 1010);
+        for _ in 0..130 {
+            stats.update(&dag, Some(500));
+        }
+        assert_eq!(stats.samples.len(), 120);
+    }
+
+    #[test]
+    fn dag_stats_blue_red_ratio() {
+        let mut stats = DagStats::default();
+        let dag = make_dag_info(5, 3, 1000, 1010);
+        stats.update(&dag, Some(500));
+        let (blue, red) = stats.blue_red_ratio().unwrap();
+        assert_eq!(blue, 3);
+        assert_eq!(red, 2);
+    }
+
+    #[test]
+    fn dag_stats_avg_dag_width() {
+        let mut stats = DagStats::default();
+        // 3 samples with tip counts 2, 4, 6 → avg 4.0
+        for tips in [2, 4, 6] {
+            let dag = make_dag_info(tips, 1, 1000, 1010);
+            stats.update(&dag, Some(100));
+        }
+        let avg = stats.avg_dag_width().unwrap();
+        assert!((avg - 4.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn dag_stats_headers_blocks_delta() {
+        let mut stats = DagStats::default();
+        let dag = make_dag_info(4, 3, 1000, 1050);
+        stats.update(&dag, Some(500));
+        assert_eq!(stats.headers_blocks_delta(), Some(50));
+    }
+
+    #[test]
+    fn dag_stats_blue_block_rate_needs_two_samples() {
+        let mut stats = DagStats::default();
+        let dag = make_dag_info(4, 3, 1000, 1010);
+        stats.update(&dag, Some(500));
+        assert!(stats.blue_block_rate().is_none());
     }
 
     #[test]

@@ -160,12 +160,11 @@ pub fn format_number(n: u64) -> String {
 }
 
 pub fn shorten_address(addr: &str, prefix_len: usize, suffix_len: usize) -> String {
-    if addr.len() > prefix_len + suffix_len + 3 {
-        format!(
-            "{}...{}",
-            &addr[..prefix_len],
-            &addr[addr.len() - suffix_len..]
-        )
+    let char_count = addr.chars().count();
+    if char_count > prefix_len + suffix_len + 3 {
+        let prefix: String = addr.chars().take(prefix_len).collect();
+        let suffix: String = addr.chars().skip(char_count - suffix_len).collect();
+        format!("{}...{}", prefix, suffix)
     } else {
         addr.to_string()
     }
@@ -180,30 +179,6 @@ pub struct MiningInfo {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct FeeStats {
-    pub avg_fee_sompi: f64,
-    pub total_fees_sompi: u64,
-    pub tx_count: usize,
-    pub min_fee_sompi: u64,
-    pub max_fee_sompi: u64,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct AddressActivity {
-    pub address: String,
-    pub tx_count: usize,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct AnalyticsData {
-    pub fee_stats: FeeStats,
-    pub top_senders: Vec<AddressActivity>,
-    pub top_receivers: Vec<AddressActivity>,
-    pub blocks_analyzed: usize,
-    pub total_transactions: usize,
-}
-
-#[derive(Debug, Clone, Default)]
 pub struct MarketData {
     pub price_usd: f64,
     pub price_btc: f64,
@@ -211,6 +186,35 @@ pub struct MarketData {
     pub volume_24h: f64,
     pub price_change_24h_pct: f64,
 }
+
+/// Single source of truth for all RPC methods available in the explorer and command line.
+/// Each entry is (method_name, description).
+pub const RPC_METHODS: &[(&str, &str)] = &[
+    ("get_server_info", "Get server info"),
+    ("get_block_dag_info", "Get block DAG info"),
+    ("get_block_count", "Get block count"),
+    ("get_mempool_entries", "Get mempool entries"),
+    ("get_coin_supply", "Get coin supply"),
+    ("get_fee_estimate", "Get fee estimate"),
+    (
+        "get_fee_estimate_experimental",
+        "Get experimental fee estimate (verbose)",
+    ),
+    ("get_connected_peer_info", "Get connected peer info"),
+    ("get_peer_addresses", "Get known peer addresses"),
+    ("get_current_network", "Get current network type"),
+    ("get_sink", "Get sink (virtual selected parent) hash"),
+    ("get_sink_blue_score", "Get sink blue score"),
+    ("get_info", "Get general node info"),
+    ("get_sync_status", "Get sync status"),
+    ("get_virtual_chain", "Get virtual selected parent chain"),
+    ("get_headers", "Get header count"),
+    (
+        "estimate_network_hashes_per_second",
+        "Estimate network hashrate",
+    ),
+    ("ping", "Ping the node"),
+];
 
 #[cfg(test)]
 mod tests {

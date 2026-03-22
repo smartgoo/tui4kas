@@ -4,35 +4,63 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
-use crate::app::App;
+use crate::app::{App, Tab};
+
+fn context_hint(app: &App) -> String {
+    if app.quit_confirm {
+        return "Press q again to quit, any other key to cancel".to_string();
+    }
+
+    if app.command_line.show_output && !app.command_line.output.is_empty() {
+        return "j/k scroll | J/K fast | g/G top/bottom | Esc close".to_string();
+    }
+
+    // Check for open popups
+    if app.mempool_detail.is_some() || app.dag_selection.block_detail.is_some() {
+        return "Esc close popup | ? help".to_string();
+    }
+
+    match app.active_tab {
+        Tab::Dashboard => "Tab/1-6 switch | p pause | : command | ? help".to_string(),
+        Tab::Mempool => "j/k select | Enter detail | g/G top/bottom | ? help".to_string(),
+        Tab::BlockDag => "h/l focus | j/k select | Enter info | ? help".to_string(),
+        Tab::Analytics => "Tab/1-6 switch | p pause | : command | ? help".to_string(),
+        Tab::RpcExplorer => {
+            "Up/Down method | Enter exec | j/k scroll | ? help".to_string()
+        }
+        Tab::IntegratedNode => {
+            let state = &app.integrated_node;
+            if state.editing {
+                "Enter save | Esc cancel".to_string()
+            } else if state.is_running() {
+                "j/k scroll | g/G top/bottom | Enter stop | ? help".to_string()
+            } else {
+                "Up/Down nav | Enter edit/toggle | r reload | ? help".to_string()
+            }
+        }
+    }
+}
 
 pub fn render_input(frame: &mut Frame, area: Rect, app: &App) {
-    let (prompt_style, input_text, cursor_hint) = if app.command_line.active {
-        (
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-            app.command_line.input.as_str(),
-            "",
-        )
-    } else {
-        (
-            Style::default().fg(Color::DarkGray),
-            "",
-            "Press ':' to enter a command, 'help' for available commands",
-        )
-    };
-
     let line = if app.command_line.active {
+        let prompt_style = Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD);
         Line::from(vec![
             Span::styled("> ", prompt_style),
-            Span::styled(input_text, Style::default().fg(Color::White)),
+            Span::styled(
+                app.command_line.input.as_str(),
+                Style::default().fg(Color::White),
+            ),
         ])
     } else {
-        Line::from(vec![
-            Span::styled("> ", prompt_style),
-            Span::styled(cursor_hint, Style::default().fg(Color::DarkGray)),
-        ])
+        let hint = context_hint(app);
+        let hint_style = if app.quit_confirm {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        Line::from(vec![Span::styled(hint, hint_style)])
     };
 
     let block = Block::default()
@@ -102,7 +130,7 @@ pub fn render_output(frame: &mut Frame, area: Rect, app: &App) {
     let paragraph = Paragraph::new(lines)
         .block(
             Block::default().borders(Borders::ALL).title(Span::styled(
-                " Output ",
+                " Output (j/k scroll, Esc close) ",
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),

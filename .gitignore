@@ -7,3 +7,4 @@
 *.swo
 *~
 TASKS.md
+.gitignore

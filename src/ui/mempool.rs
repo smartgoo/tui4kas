@@ -8,19 +8,7 @@ use crate::app::App;
 use crate::rpc::types::sompi_to_kas;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
-    if app.is_node_syncing() {
-        let block = Block::default().borders(Borders::ALL).title(Span::styled(
-            " Mempool ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
-        let msg = Paragraph::new(Line::from(Span::styled(
-            " Node is syncing... Mempool data will be available once synced.",
-            Style::default().fg(Color::Yellow),
-        )))
-        .block(block);
-        frame.render_widget(msg, area);
+    if super::common::render_syncing_guard(frame, area, app, "Mempool") {
         return;
     }
 
@@ -38,7 +26,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_summary(frame: &mut Frame, area: Rect, app: &App) {
-    let lines = if let Some(ref mempool) = app.mempool_state {
+    let lines = if let Some(ref mempool) = app.node.mempool_state {
         let orphan_count = mempool.entries.iter().filter(|e| e.is_orphan).count();
         vec![
             Line::from(vec![
@@ -96,7 +84,7 @@ fn render_table(frame: &mut Frame, area: Rect, app: &App) {
         0
     };
 
-    let rows: Vec<Row> = if let Some(ref mempool) = app.mempool_state {
+    let rows: Vec<Row> = if let Some(ref mempool) = app.node.mempool_state {
         mempool
             .entries
             .iter()
@@ -157,8 +145,9 @@ fn render_table(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_detail_popup(frame: &mut Frame, area: Rect, detail: &str) {
-    let popup_width = area.width.min(60);
-    let popup_height = area.height.min(10);
+    let content_lines = detail.lines().count() as u16;
+    let popup_width = area.width.saturating_sub(10).clamp(40, 80);
+    let popup_height = (content_lines + 4).clamp(6, area.height.saturating_sub(6));
     let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
     let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
     let popup_area = Rect::new(x, y, popup_width, popup_height);

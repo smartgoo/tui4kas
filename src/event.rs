@@ -1,4 +1,4 @@
-use crossterm::event::{self, Event, KeyEvent};
+use crossterm::event::{self, Event, KeyEvent, MouseEvent};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 pub enum AppEvent {
     Tick,
     Key(KeyEvent),
+    Mouse(MouseEvent),
     Resize(u16, u16),
 }
 
@@ -23,6 +24,11 @@ impl EventHandler {
                     match event::read() {
                         Ok(Event::Key(key)) => {
                             if tx.send(AppEvent::Key(key)).is_err() {
+                                return;
+                            }
+                        }
+                        Ok(Event::Mouse(mouse)) => {
+                            if tx.send(AppEvent::Mouse(mouse)).is_err() {
                                 return;
                             }
                         }

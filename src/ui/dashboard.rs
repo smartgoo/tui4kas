@@ -35,7 +35,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_node_info(frame: &mut Frame, area: Rect, app: &App) {
-    let lines = if let Some(ref info) = app.server_info {
+    let lines = if let Some(ref info) = app.node.server_info {
         let synced_style = if info.is_synced {
             Style::default().fg(Color::Green)
         } else {
@@ -68,13 +68,13 @@ fn render_node_info(frame: &mut Frame, area: Rect, app: &App) {
             ]));
         }
 
-        if let Some(ref url) = app.node_url {
+        if let Some(ref url) = app.node.node_url {
             lines.push(Line::from(vec![
                 Span::styled(" URL:         ", Style::default().fg(Color::DarkGray)),
                 Span::raw(url),
             ]));
         }
-        if let Some(ref uid) = app.node_uid {
+        if let Some(ref uid) = app.node.node_uid {
             lines.push(Line::from(vec![
                 Span::styled(" Node ID:     ", Style::default().fg(Color::DarkGray)),
                 Span::raw(uid),
@@ -103,7 +103,7 @@ fn render_node_info(frame: &mut Frame, area: Rect, app: &App) {
 fn render_network_stats(frame: &mut Frame, area: Rect, app: &App) {
     if app.is_node_syncing() {
         let daa = app
-            .server_info
+            .node.server_info
             .as_ref()
             .map(|s| format_number(s.virtual_daa_score))
             .unwrap_or_default();
@@ -127,7 +127,7 @@ fn render_network_stats(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let mut lines = if let Some(ref dag) = app.dag_info {
+    let mut lines = if let Some(ref dag) = app.node.dag_info {
         vec![
             Line::from(vec![
                 Span::styled(" Block Count:    ", Style::default().fg(Color::DarkGray)),
@@ -157,7 +157,7 @@ fn render_network_stats(frame: &mut Frame, area: Rect, app: &App) {
         ))]
     };
 
-    if let Some(ref supply) = app.coin_supply {
+    if let Some(ref supply) = app.node.coin_supply {
         let max_kas = sompi_to_kas(supply.max_sompi);
         let circ_kas = sompi_to_kas(supply.circulating_sompi);
         let pct = if max_kas > 0.0 {
@@ -266,7 +266,7 @@ fn render_mining_info(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let lines = if let Some(ref mining) = app.mining_info {
+    let lines = if let Some(ref mining) = app.node.mining_info {
         let hashrate_str = format_hashrate(mining.hashrate);
         let mut lines = vec![
             Line::from(vec![
@@ -372,7 +372,7 @@ fn render_mempool_summary(frame: &mut Frame, area: Rect, app: &App) {
 
     let mut lines = Vec::new();
 
-    if let Some(ref mempool) = app.mempool_state {
+    if let Some(ref mempool) = app.node.mempool_state {
         lines.push(Line::from(vec![
             Span::styled(" Transactions: ", Style::default().fg(Color::DarkGray)),
             Span::raw(format_number(mempool.entry_count as u64)),
@@ -388,7 +388,7 @@ fn render_mempool_summary(frame: &mut Frame, area: Rect, app: &App) {
         )));
     }
 
-    if let Some(ref fee) = app.fee_estimate {
+    if let Some(ref fee) = app.node.fee_estimate {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
             Span::styled(" Priority Fee: ", Style::default().fg(Color::DarkGray)),

@@ -13,45 +13,81 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     }
 }
 
+fn opt_str(val: &Option<String>) -> &str {
+    val.as_deref().unwrap_or("—")
+}
+
+fn opt_usize(val: &Option<usize>) -> String {
+    val.map_or("—".to_string(), |v| v.to_string())
+}
+
+fn opt_f64(val: &Option<f64>) -> String {
+    val.map_or("—".to_string(), |v| format!("{:.1}", v))
+}
+
 fn render_settings(frame: &mut Frame, area: Rect, app: &App) {
     let state = &app.integrated_node;
+    let cfg = &state.config;
 
-    let mut lines = build_field_lines(
-        state,
-        &[
-            (0, "Network", &state.config.network),
-            (
-                1,
-                "UTXO Index",
-                if state.config.utxo_index { "Yes" } else { "No" },
-            ),
-            (2, "RAM Scale", &format!("{:.1}", state.config.ram_scale)),
-            (3, "App Dir", &state.config.app_dir),
-            (4, "Log Level", &state.config.log_level),
-            (5, "Async Threads", &state.config.async_threads.to_string()),
-            (
-                6,
-                "Auto Start",
-                if state.config.auto_start_daemon {
-                    "Yes"
-                } else {
-                    "No"
-                },
-            ),
-        ],
-    );
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
+    // ── General ──
+    lines.push(section_header("General"));
+    append_fields(state, &mut lines, &[
+        (0,  "Network",       cfg.network.clone()),
+        (1,  "UTXO Index",    bool_str(cfg.utxo_index)),
+        (2,  "Archival",      bool_str(cfg.archival)),
+        (3,  "RAM Scale",     format!("{:.1}", cfg.ram_scale)),
+        (4,  "Log Level",     cfg.log_level.clone()),
+        (5,  "Async Threads", cfg.async_threads.to_string()),
+        (6,  "Auto Start",    bool_str(cfg.auto_start_daemon)),
+    ]);
+
+    // ── Networking ──
+    lines.push(Line::from(""));
+    lines.push(section_header("Networking"));
+    append_fields(state, &mut lines, &[
+        (7,  "Listen",        opt_str(&cfg.listen).to_string()),
+        (8,  "External IP",   opt_str(&cfg.externalip).to_string()),
+        (9,  "Outbound Peers", cfg.outbound_target.to_string()),
+        (10, "Max Inbound",   cfg.inbound_limit.to_string()),
+        (11, "Connect Peers", if cfg.connect_peers.is_empty() { "—".to_string() } else { cfg.connect_peers.clone() }),
+        (12, "Add Peers",     if cfg.add_peers.is_empty() { "—".to_string() } else { cfg.add_peers.clone() }),
+        (13, "Disable UPnP",  bool_str(cfg.disable_upnp)),
+        (14, "Disable DNS Seed", bool_str(cfg.disable_dns_seed)),
+    ]);
+
+    // ── Storage ──
+    lines.push(Line::from(""));
+    lines.push(section_header("Storage"));
+    append_fields(state, &mut lines, &[
+        (15, "App Dir",        cfg.app_dir.clone()),
+        (16, "RocksDB Preset", cfg.rocksdb_preset.clone()),
+        (17, "RocksDB WAL Dir", opt_str(&cfg.rocksdb_wal_dir).to_string()),
+        (18, "RocksDB Cache MB", opt_usize(&cfg.rocksdb_cache_size)),
+        (19, "Retention Days", opt_f64(&cfg.retention_period_days)),
+        (20, "Reset DB",       bool_str(cfg.reset_db)),
+        (21, "RPC Max Clients", cfg.rpc_max_clients.to_string()),
+    ]);
+
+    // ── Performance ──
+    lines.push(Line::from(""));
+    lines.push(section_header("Performance"));
+    append_fields(state, &mut lines, &[
+        (22, "Perf Metrics", bool_str(cfg.perf_metrics)),
+    ]);
 
     lines.push(Line::from(""));
 
     // Start action
-    let start_style = if state.selected_field == 7 {
+    let start_style = if state.selected_field == 23 {
         Style::default()
             .fg(Color::Green)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::Green)
     };
-    let prefix = if state.selected_field == 7 {
+    let prefix = if state.selected_field == 23 {
         " > "
     } else {
         "   "
@@ -91,50 +127,90 @@ fn render_settings(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled(" Edit/Toggle", Style::default().fg(Color::DarkGray)),
     ]));
 
+    // Calculate scroll offset to keep selected field visible
+    let total_content_lines = lines.len();
+    let inner_height = area.height.saturating_sub(2) as usize;
+    let scroll = if total_content_lines > inner_height {
+        // Estimate which line the selected field is on
+        let field_line = estimate_field_line(state.selected_field);
+        if field_line >= inner_height {
+            (field_line - inner_height / 2).min(total_content_lines.saturating_sub(inner_height))
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" Node Settings ");
     let para = Paragraph::new(lines)
         .block(block)
-        .wrap(Wrap { trim: false });
+        .wrap(Wrap { trim: false })
+        .scroll((scroll as u16, 0));
     frame.render_widget(para, area);
 }
 
-fn build_field_lines(
+/// Estimate which line number a field index corresponds to (for scrolling)
+fn estimate_field_line(field: usize) -> usize {
+    // section header + fields, with blank lines between sections
+    match field {
+        0..=6 => 1 + field,             // General: header at 0, fields 1-7
+        7..=14 => 10 + (field - 7),     // Networking: blank+header at 8-9, fields 10-17
+        15..=21 => 20 + (field - 15),   // Storage: blank+header at 18-19, fields 20-26
+        22 => 29,                        // Performance: blank+header at 27-28, field 29
+        23 => 32,                        // Start button
+        _ => 0,
+    }
+}
+
+fn section_header(title: &str) -> Line<'static> {
+    Line::from(Span::styled(
+        format!(" ── {} ──", title),
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ))
+}
+
+fn bool_str(v: bool) -> String {
+    if v { "Yes" } else { "No" }.to_string()
+}
+
+fn append_fields(
     state: &IntegratedNodeState,
-    fields: &[(usize, &str, &str)],
-) -> Vec<Line<'static>> {
-    fields
-        .iter()
-        .map(|(idx, label, value)| {
-            let selected = state.selected_field == *idx;
-            let prefix = if selected { " > " } else { "   " };
-            let label_style = Style::default().fg(Color::DarkGray);
-            let value_style = if selected && state.editing {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
-            } else if selected {
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
+    lines: &mut Vec<Line<'static>>,
+    fields: &[(usize, &str, String)],
+) {
+    for (idx, label, value) in fields {
+        let selected = state.selected_field == *idx;
+        let prefix = if selected { " > " } else { "   " };
+        let label_style = Style::default().fg(Color::DarkGray);
+        let value_style = if selected && state.editing {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else if selected {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
 
-            let display_value = if selected && state.editing {
-                format!("{}_", state.edit_buffer)
-            } else {
-                value.to_string()
-            };
+        let display_value = if selected && state.editing {
+            format!("{}_", state.edit_buffer)
+        } else {
+            value.to_string()
+        };
 
-            Line::from(vec![
-                Span::raw(prefix.to_string()),
-                Span::styled(format!("{:<16}", label), label_style),
-                Span::styled(display_value, value_style),
-            ])
-        })
-        .collect()
+        lines.push(Line::from(vec![
+            Span::raw(prefix.to_string()),
+            Span::styled(format!("{:<18}", label), label_style),
+            Span::styled(display_value, value_style),
+        ]));
+    }
 }
 
 fn render_running(frame: &mut Frame, area: Rect, app: &App) {
@@ -153,7 +229,7 @@ fn render_running(frame: &mut Frame, area: Rect, app: &App) {
         _ => ("Unknown", Color::DarkGray),
     };
 
-    let sync_status = if let Some(ref info) = app.server_info {
+    let sync_status = if let Some(ref info) = app.node.server_info {
         if info.is_synced {
             ("Synced".to_string(), Color::Green)
         } else {

@@ -7,19 +7,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 use crate::app::App;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
-    if app.is_node_syncing() {
-        let block = Block::default().borders(Borders::ALL).title(Span::styled(
-            " RPC Cmds ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
-        let msg = Paragraph::new(Line::from(Span::styled(
-            " Node is syncing... RPC Cmds will be available once synced.",
-            Style::default().fg(Color::Yellow),
-        )))
-        .block(block);
-        frame.render_widget(msg, area);
+    if super::common::render_syncing_guard(frame, area, app, "RPC Cmds") {
         return;
     }
 
@@ -73,12 +61,12 @@ fn render_method_list(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_response(frame: &mut Frame, area: Rect, app: &App) {
-    let content = if app.rpc_explorer.is_loading {
-        "Loading...".to_string()
+    let content: &str = if app.rpc_explorer.is_loading {
+        "Loading..."
     } else if let Some(ref response) = app.rpc_explorer.last_response {
-        response.clone()
+        response.as_str()
     } else {
-        "Press Enter to execute the selected RPC method.".to_string()
+        "Press Enter to execute the selected RPC method."
     };
 
     let scroll_hint = if app.rpc_explorer.scroll_offset > 0 {
@@ -90,6 +78,12 @@ fn render_response(frame: &mut Frame, area: Rect, app: &App) {
         " Response (j/k to scroll) ".to_string()
     };
 
+    // Clamp scroll offset to content bounds
+    let content_lines = content.lines().count();
+    let visible_height = area.height.saturating_sub(2) as usize;
+    let max_scroll = content_lines.saturating_sub(visible_height);
+    let clamped_scroll = app.rpc_explorer.scroll_offset.min(max_scroll);
+
     let paragraph = Paragraph::new(content)
         .block(
             Block::default().borders(Borders::ALL).title(Span::styled(
@@ -100,7 +94,7 @@ fn render_response(frame: &mut Frame, area: Rect, app: &App) {
             )),
         )
         .wrap(Wrap { trim: false })
-        .scroll((app.rpc_explorer.scroll_offset as u16, 0));
+        .scroll((clamped_scroll as u16, 0));
 
     frame.render_widget(paragraph, area);
 }
