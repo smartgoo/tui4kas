@@ -179,10 +179,10 @@ pub struct MiningInfo {
     pub blocks_analyzed: usize,
     pub pools: Vec<(String, usize)>,
     pub node_versions: Vec<(String, usize)>,
-    pub total_fees: u64,
-    pub min_fee: u64,
-    pub max_fee: u64,
-    pub fee_count: usize,
+    pub total_mass: u64,
+    pub min_mass: u64,
+    pub max_mass: u64,
+    pub mass_count: usize,
 }
 
 #[derive(Debug, Clone)]

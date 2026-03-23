@@ -8,6 +8,7 @@ use crate::app::App;
 use crate::rpc::client::RpcManager;
 
 /// Tracks cancellable background polling tasks.
+#[derive(Default)]
 pub struct PollingHandles {
     pub core: Option<tokio::task::JoinHandle<()>>,
     pub mining: Option<tokio::task::JoinHandle<()>>,
@@ -15,14 +16,6 @@ pub struct PollingHandles {
 }
 
 impl PollingHandles {
-    pub fn new() -> Self {
-        Self {
-            core: None,
-            mining: None,
-            analytics: None,
-        }
-    }
-
     pub fn abort_all(&mut self) {
         if let Some(h) = self.core.take() {
             h.abort();
@@ -63,7 +56,9 @@ pub fn start_mining_polling(
         }
     }));
 
-    handles.analytics = None;
+    if let Some(h) = handles.analytics.take() {
+        h.abort();
+    }
 }
 
 /// Create an RPC manager, connect, and start polling.
@@ -84,16 +79,19 @@ pub async fn create_and_start_rpc(
     let app_clone = app.clone();
     handles.core = Some(tokio::spawn(async move {
         let max_attempts = if retry { 30 } else { 1 };
+        let mut connected = false;
         for attempt in 0..max_attempts {
             match rpc_for_connect.connect().await {
-                Ok(_) => break,
+                Ok(_) => { connected = true; break; }
                 Err(_) if attempt < max_attempts - 1 => {
                     tokio::time::sleep(Duration::from_millis(500)).await;
                 }
                 Err(_) => break,
             }
         }
-        rpc_for_connect.run_polling_loop(Duration::from_millis(interval), app_clone).await;
+        if connected {
+            rpc_for_connect.run_polling_loop(Duration::from_millis(interval), app_clone).await;
+        }
     }));
 
     Ok(rpc)

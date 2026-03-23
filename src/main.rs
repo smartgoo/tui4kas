@@ -1,7 +1,6 @@
 mod analytics;
 mod analytics_streaming;
 mod app;
-mod cli;
 mod config;
 mod connection;
 mod event;
@@ -14,7 +13,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use clap::Parser;
 use crossterm::ExecutableCommand;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -24,7 +22,6 @@ use ratatui::backend::CrosstermBackend;
 use tokio::sync::RwLock;
 
 use crate::app::App;
-use crate::cli::CliArgs;
 use crate::config::AppConfig;
 use crate::connection::{PollingHandles, create_and_start_rpc, start_mining_polling};
 use crate::event::{AppEvent, EventHandler};
@@ -34,8 +31,6 @@ use crate::rpc::market;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let _args = CliArgs::parse();
-
     // Load app config
     let config = AppConfig::load().unwrap_or_default();
 
@@ -65,7 +60,11 @@ async fn main() -> Result<()> {
     // Settings/reconnection channel
     let (settings_tx, mut settings_rx) = tokio::sync::mpsc::channel::<SettingsCommand>(4);
 
-    let mut polling_handles = PollingHandles::new();
+    // Channel for receiving reconnection results from background task
+    let (reconnect_tx, mut reconnect_rx) =
+        tokio::sync::mpsc::channel::<(Arc<RpcManager>, PollingHandles)>(1);
+
+    let mut polling_handles = PollingHandles::default();
 
     // Start market data polling (every 60 seconds) — independent of node
     market::start_market_polling(app.clone(), Duration::from_secs(60));
@@ -94,6 +93,12 @@ async fn main() -> Result<()> {
     let mut events = EventHandler::new(Duration::from_millis(250));
 
     loop {
+        // Check for completed reconnection (non-blocking)
+        if let Ok((new_rpc, new_handles)) = reconnect_rx.try_recv() {
+            rpc_for_explorer = new_rpc;
+            polling_handles = new_handles;
+        }
+
         // Check for settings/reconnection commands (non-blocking)
         if let Ok(cmd) = settings_rx.try_recv() {
             match cmd {
@@ -105,54 +110,45 @@ async fn main() -> Result<()> {
                     // Clear stale data
                     {
                         let mut app_guard = app.write().await;
-                        app_guard.node.server_info = None;
-                        app_guard.node.dag_info = None;
-                        app_guard.node.mempool_state = None;
-                        app_guard.node.coin_supply = None;
-                        app_guard.node.fee_estimate = None;
-                        app_guard.node.mining_info = None;
-                        app_guard.analytics.engine = None;
-                        app_guard.analytics.sync_progress = None;
-                        app_guard.analytics.cached_views = None;
-                        app_guard.node.node_url = None;
-                        app_guard.node.node_uid = None;
-                        app_guard.node.connection_status =
-                            crate::app::ConnectionStatus::Disconnected;
+                        app_guard.node = crate::app::NodeState::default();
+                        app_guard.analytics = crate::app::AnalyticsState::default();
                     }
 
-                    // Reconnect with new config
-                    match create_and_start_rpc(
-                        new_config.url.clone(),
-                        &new_config.network,
-                        &app,
-                        new_config.refresh_interval_ms,
-                        false,
-                        &mut polling_handles,
-                    )
-                    .await
-                    {
-                        Ok(new_rpc) => {
-                            rpc_for_explorer = new_rpc;
-                            if new_config.url.is_some() {
-                                start_mining_polling(
-                                    &rpc_for_explorer,
-                                    &app,
-                                    &mut polling_handles,
-                                );
-                                analytics_streaming::start_analytics_streaming(
-                                    &rpc_for_explorer,
-                                    &app,
-                                    &mut polling_handles,
-                                );
+                    // Reconnect in background to avoid blocking the UI
+                    let app_bg = app.clone();
+                    let reconnect_tx_bg = reconnect_tx.clone();
+                    tokio::spawn(async move {
+                        let mut handles = PollingHandles::default();
+                        match create_and_start_rpc(
+                            new_config.url.clone(),
+                            &new_config.network,
+                            &app_bg,
+                            new_config.refresh_interval_ms,
+                            false,
+                            &mut handles,
+                        )
+                        .await
+                        {
+                            Ok(new_rpc) => {
+                                if new_config.url.is_some() {
+                                    start_mining_polling(&new_rpc, &app_bg, &mut handles);
+                                    analytics_streaming::start_analytics_streaming(
+                                        &new_rpc, &app_bg, &mut handles,
+                                    );
+                                }
+                                let _ = reconnect_tx_bg.send((new_rpc, handles)).await;
+                            }
+                            Err(_) => {
+                                // Best effort — create a disconnected manager
+                                if let Ok(mgr) =
+                                    RpcManager::new(None, &new_config.network, app_bg.clone()).await
+                                {
+                                    let _ =
+                                        reconnect_tx_bg.send((Arc::new(mgr), handles)).await;
+                                }
                             }
                         }
-                        Err(_) => {
-                            // Best effort — app continues without RPC
-                            rpc_for_explorer = Arc::new(
-                                RpcManager::new(None, &new_config.network, app.clone()).await?,
-                            );
-                        }
-                    }
+                    });
                 }
             }
         }
@@ -174,15 +170,16 @@ async fn main() -> Result<()> {
         match event {
             AppEvent::Key(key) => {
                 let mut app_guard = app.write().await;
-                app_guard.dirty = true;
 
                 if app_guard.command_line.active {
+                    app_guard.dirty = true;
                     if let Some(cmd) = keys::handle_command_mode_keys(&mut app_guard, key.code) {
                         drop(app_guard);
                         keys::handle_command(&cmd, &app, &rpc_for_explorer).await;
                         continue;
                     }
                 } else {
+                    app_guard.dirty = true;
                     let consumed = keys::handle_normal_keys(
                         &mut app_guard,
                         key,
@@ -201,10 +198,8 @@ async fn main() -> Result<()> {
             }
             AppEvent::Mouse(mouse) => {
                 let mut app_guard = app.write().await;
-                app_guard.dirty = true;
-                if keys::handle_mouse(&mut app_guard, mouse) {
-                    continue;
-                }
+                app_guard.dirty = true; // mouse events are infrequent, always redraw
+                keys::handle_mouse(&mut app_guard, mouse);
             }
             AppEvent::Tick => {
                 // Clear clipboard flash after one tick

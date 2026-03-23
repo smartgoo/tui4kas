@@ -287,10 +287,10 @@ impl RpcManager {
         let mut miner_counts: HashMap<String, usize> = HashMap::new();
         let mut pool_counts: HashMap<String, usize> = HashMap::new();
         let mut version_counts: HashMap<String, usize> = HashMap::new();
-        let mut total_fees: u64 = 0;
-        let mut min_fee: u64 = u64::MAX;
-        let mut max_fee: u64 = 0;
-        let mut fee_count: usize = 0;
+        let mut total_mass: u64 = 0;
+        let mut min_mass: u64 = u64::MAX;
+        let mut max_mass: u64 = 0;
+        let mut mass_count: usize = 0;
 
         // Fetch blocks in parallel (10 concurrent)
         let hashes: Vec<_> = sample_hashes.to_vec();
@@ -326,22 +326,22 @@ impl RpcManager {
                 }
             }
 
-            // Extract fees from non-coinbase transactions
+            // Extract compute_mass from non-coinbase transactions
             for tx in block.transactions.iter().skip(1) {
                 if let Some(ref verbose) = tx.verbose_data {
                     let mass = verbose.compute_mass;
                     if mass > 0 {
-                        total_fees += mass;
-                        fee_count += 1;
-                        min_fee = min_fee.min(mass);
-                        max_fee = max_fee.max(mass);
+                        total_mass += mass;
+                        mass_count += 1;
+                        min_mass = min_mass.min(mass);
+                        max_mass = max_mass.max(mass);
                     }
                 }
             }
         }
 
-        if min_fee == u64::MAX {
-            min_fee = 0;
+        if min_mass == u64::MAX {
+            min_mass = 0;
         }
 
         let unique_miners = miner_counts.len();
@@ -361,10 +361,10 @@ impl RpcManager {
             blocks_analyzed: sample_size,
             pools,
             node_versions,
-            total_fees,
-            min_fee,
-            max_fee,
-            fee_count,
+            total_mass,
+            min_mass,
+            max_mass,
+            mass_count,
         })
     }
 
@@ -535,7 +535,6 @@ impl Drop for RpcManager {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::rpc::types::RPC_METHODS;
     use std::collections::HashSet;
 

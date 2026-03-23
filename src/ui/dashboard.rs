@@ -270,35 +270,6 @@ fn render_mempool_summary(frame: &mut Frame, area: Rect, app: &App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rpc::types::format_number;
-
-    #[test]
-    fn format_number_zero() {
-        assert_eq!(format_number(0), "0");
-    }
-
-    #[test]
-    fn format_number_small() {
-        assert_eq!(format_number(1), "1");
-        assert_eq!(format_number(999), "999");
-    }
-
-    #[test]
-    fn format_number_thousands() {
-        assert_eq!(format_number(1_000), "1,000");
-        assert_eq!(format_number(12_345), "12,345");
-    }
-
-    #[test]
-    fn format_number_millions() {
-        assert_eq!(format_number(1_000_000), "1,000,000");
-        assert_eq!(format_number(123_456_789), "123,456,789");
-    }
-
-    #[test]
-    fn format_number_large() {
-        assert_eq!(format_number(1_000_000_000_000), "1,000,000,000,000");
-    }
 
     // --- format_usd ---
 

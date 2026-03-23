@@ -101,7 +101,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         app.mining_tab.pools_selected,
     );
 
-    // --- Bottom: Node Versions (left) + Fee Info (right) ---
+    // --- Bottom: Node Versions (left) + Mass Info (right) ---
     let bottom = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -228,46 +228,46 @@ fn render_fee_panel(frame: &mut Frame, area: Rect, mining: &MiningInfo) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray))
         .title(Span::styled(
-            " Fee Info ",
+            " Mass Info ",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ));
 
-    let avg_fee = if mining.fee_count > 0 {
-        mining.total_fees as f64 / mining.fee_count as f64
+    let avg_mass = if mining.mass_count > 0 {
+        mining.total_mass as f64 / mining.mass_count as f64
     } else {
         0.0
     };
 
     let lines = vec![
         Line::from(vec![
-            Span::styled(" Average Fee (mass): ", Style::default().fg(Color::DarkGray)),
-            Span::raw(format!("{:.2}", avg_fee)),
+            Span::styled(" Avg Mass:           ", Style::default().fg(Color::DarkGray)),
+            Span::raw(format!("{:.2}", avg_mass)),
         ]),
         Line::from(vec![
-            Span::styled(" Min Fee (mass):     ", Style::default().fg(Color::DarkGray)),
-            Span::raw(if mining.fee_count > 0 {
-                mining.min_fee.to_string()
+            Span::styled(" Min Mass:           ", Style::default().fg(Color::DarkGray)),
+            Span::raw(if mining.mass_count > 0 {
+                mining.min_mass.to_string()
             } else {
                 "N/A".to_string()
             }),
         ]),
         Line::from(vec![
-            Span::styled(" Max Fee (mass):     ", Style::default().fg(Color::DarkGray)),
-            Span::raw(if mining.fee_count > 0 {
-                mining.max_fee.to_string()
+            Span::styled(" Max Mass:           ", Style::default().fg(Color::DarkGray)),
+            Span::raw(if mining.mass_count > 0 {
+                mining.max_mass.to_string()
             } else {
                 "N/A".to_string()
             }),
         ]),
         Line::from(vec![
-            Span::styled(" Total Fees:         ", Style::default().fg(Color::DarkGray)),
-            Span::raw(format_number(mining.total_fees)),
+            Span::styled(" Total Mass:         ", Style::default().fg(Color::DarkGray)),
+            Span::raw(format_number(mining.total_mass)),
         ]),
         Line::from(vec![
-            Span::styled(" Tx w/ Fee Data:     ", Style::default().fg(Color::DarkGray)),
-            Span::raw(format_number(mining.fee_count as u64)),
+            Span::styled(" Tx w/ Mass Data:    ", Style::default().fg(Color::DarkGray)),
+            Span::raw(format_number(mining.mass_count as u64)),
         ]),
     ];
 

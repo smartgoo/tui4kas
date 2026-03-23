@@ -133,16 +133,16 @@ pub fn handle_normal_keys(
         match key.code {
             KeyCode::Esc => { app.command_line.show_output = false; }
             KeyCode::Char('j') => {
-                app.command_line.output_scroll = app.command_line.output_scroll.saturating_sub(1);
-            }
-            KeyCode::Char('k') => {
                 app.command_line.output_scroll = app.command_line.output_scroll.saturating_add(1);
             }
+            KeyCode::Char('k') => {
+                app.command_line.output_scroll = app.command_line.output_scroll.saturating_sub(1);
+            }
             KeyCode::Char('J') => {
-                app.command_line.output_scroll = app.command_line.output_scroll.saturating_sub(10);
+                app.command_line.output_scroll = app.command_line.output_scroll.saturating_add(10);
             }
             KeyCode::Char('K') => {
-                app.command_line.output_scroll = app.command_line.output_scroll.saturating_add(10);
+                app.command_line.output_scroll = app.command_line.output_scroll.saturating_sub(10);
             }
             KeyCode::Char('g') => { app.command_line.output_scroll = 0; }
             KeyCode::Char('G') => { app.command_line.output_scroll = usize::MAX; }
@@ -629,19 +629,24 @@ pub fn handle_analytics_keys(app: &mut App, key: KeyCode) {
         }
         // Toggle view mode for focused panel
         KeyCode::Char('v') => {
-            app.analytics.view_modes[app.analytics.focus].toggle();
+            let focus = app.analytics.focus;
+            if let Some(mode) = app.analytics.view_modes.get_mut(focus) {
+                mode.toggle();
+            }
         }
         // Cycle time window for focused panel
         KeyCode::Char('t') => {
-            app.analytics.time_windows[app.analytics.focus].cycle();
-            // Refresh the cached view for this panel immediately
-            if let Some(ref engine) = app.analytics.engine
-                && let Ok(eng) = engine.try_read()
-            {
-                let focus = app.analytics.focus;
-                let new_view = eng.get_view(app.analytics.time_windows[focus]);
-                if let Some(ref mut views) = app.analytics.cached_views {
-                    views[focus] = new_view;
+            let focus = app.analytics.focus;
+            if let Some(tw) = app.analytics.time_windows.get_mut(focus) {
+                tw.cycle();
+                // Refresh the cached view for this panel immediately
+                if let Some(ref engine) = app.analytics.engine
+                    && let Ok(eng) = engine.try_read()
+                {
+                    let new_view = eng.get_view(app.analytics.time_windows[focus]);
+                    if let Some(ref mut views) = app.analytics.cached_views {
+                        views[focus] = new_view;
+                    }
                 }
             }
         }
@@ -666,8 +671,9 @@ pub fn handle_settings_keys(
                 let val = state.edit_buffer.clone();
                 state.editing = false;
                 state.edit_buffer.clear();
-                if let Some(field) = SettingsField::from_index(state.selected_field) {
-                    apply_field_edit(state, field, &val);
+                if let Some(field) = SettingsField::from_index(state.selected_field)
+                    && apply_field_edit(state, field, &val)
+                {
                     auto_save_and_reconnect(state, settings_tx);
                 }
             }
@@ -771,29 +777,35 @@ fn get_field_value(config: &AppConfig, field: SettingsField) -> String {
     }
 }
 
-fn apply_field_edit(state: &mut SettingsState, field: SettingsField, val: &str) {
+/// Apply an edited field value. Returns `true` if the edit was valid and applied.
+fn apply_field_edit(state: &mut SettingsState, field: SettingsField, val: &str) -> bool {
     let trimmed = val.trim();
     match field {
         SettingsField::Url => {
-            state.config.url = if trimmed.is_empty() {
-                None
+            if trimmed.is_empty() {
+                state.config.url = None;
+                true
+            } else if trimmed.starts_with("ws://") || trimmed.starts_with("wss://") {
+                state.config.url = Some(trimmed.to_string());
+                true
             } else {
-                Some(trimmed.to_string())
-            };
+                state.status_message = Some(("URL must start with ws:// or wss://".to_string(), true));
+                false
+            }
         }
-        SettingsField::Network => {
-            // Network is cycled, not typed
-        }
+        SettingsField::Network => false, // cycled, not typed
         SettingsField::RefreshInterval => {
             if let Ok(v) = trimmed.parse::<u64>()
                 && v >= 100
             {
                 state.config.refresh_interval_ms = v;
+                true
+            } else {
+                state.status_message = Some(("Interval must be >= 100ms".to_string(), true));
+                false
             }
         }
-        SettingsField::AnalysisStart => {
-            // Cycled, not typed
-        }
+        SettingsField::AnalysisStart => false, // cycled, not typed
     }
 }
 

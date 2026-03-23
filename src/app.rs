@@ -498,15 +498,17 @@ pub struct AnalyticsSyncProgress {
     pub from_pruning_point: bool,
 }
 
+pub const ANALYTICS_PANEL_COUNT: usize = 6;
+
 #[derive(Default)]
 pub struct AnalyticsState {
     pub engine: Option<Arc<tokio::sync::RwLock<AnalyticsEngine>>>,
     pub focus: usize,
-    pub view_modes: [ViewMode; 6],
-    pub time_windows: [TimeWindow; 6],
+    pub view_modes: [ViewMode; ANALYTICS_PANEL_COUNT],
+    pub time_windows: [TimeWindow; ANALYTICS_PANEL_COUNT],
     pub sync_progress: Option<AnalyticsSyncProgress>,
     pub reorg_notification: Option<String>,
-    pub cached_views: Option<[AggregatedView; 6]>,
+    pub cached_views: Option<[AggregatedView; ANALYTICS_PANEL_COUNT]>,
 }
 
 #[derive(Default)]

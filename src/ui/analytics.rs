@@ -83,7 +83,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     // Use cached views (refreshed by analytics streaming task)
-    let default_views: [AggregatedView; 6] = Default::default();
+    let default_views: [AggregatedView; crate::app::ANALYTICS_PANEL_COUNT] = Default::default();
     let views = app.analytics.cached_views.as_ref().unwrap_or(&default_views);
 
     // Layout: 3 rows — top 3 columns, mid 2 columns, bottom full-width bar chart
