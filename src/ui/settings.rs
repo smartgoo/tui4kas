@@ -33,7 +33,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     lines.push(section_header("Connection"));
 
     // URL field
-    let url_display = cfg.url.clone().unwrap_or_else(|| "(PNN — Public Node Network)".to_string());
+    let url_display = cfg
+        .url
+        .clone()
+        .unwrap_or_else(|| "(PNN — Public Node Network)".to_string());
     append_field(state, &mut lines, 0, "wRPC URL", url_display);
 
     // Network field
@@ -58,7 +61,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         "Current"
     };
-    append_field(state, &mut lines, 3, "Analyze From", analysis_start.to_string());
+    append_field(
+        state,
+        &mut lines,
+        3,
+        "Analyze From",
+        analysis_start.to_string(),
+    );
 
     lines.push(Line::from(""));
 
@@ -91,9 +100,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         Style::default().fg(Color::DarkGray),
     )));
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Settings ");
+    let block = Block::default().borders(Borders::ALL).title(" Settings ");
     let para = Paragraph::new(lines)
         .block(block)
         .wrap(Wrap { trim: false });

@@ -6,7 +6,6 @@ use crate::analytics::{AggregatedView, AnalyticsEngine};
 use crate::config::AppConfig;
 use crate::rpc::types::*;
 
-
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct DagSample {
@@ -872,7 +871,10 @@ mod tests {
         let mut cl = CommandLine::default();
         cl.input = "get_server_info".to_string();
         cl.submit();
-        assert_eq!(cl.history, VecDeque::from(vec!["get_server_info".to_string()]));
+        assert_eq!(
+            cl.history,
+            VecDeque::from(vec!["get_server_info".to_string()])
+        );
     }
 
     #[test]

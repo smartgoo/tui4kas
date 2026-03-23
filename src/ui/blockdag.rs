@@ -270,4 +270,3 @@ fn render_block_popup(frame: &mut Frame, area: Rect, detail: &str) {
 
     frame.render_widget(popup, popup_area);
 }
-

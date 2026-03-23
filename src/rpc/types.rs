@@ -213,10 +213,7 @@ pub fn parse_coinbase_payload(payload: &[u8]) -> CoinbaseInfo {
         return none;
     }
 
-    let payload_str: String = payload[data_start..]
-        .iter()
-        .map(|&b| b as char)
-        .collect();
+    let payload_str: String = payload[data_start..].iter().map(|&b| b as char).collect();
     let payload_str = payload_str.trim_matches('\0').trim();
 
     if payload_str.is_empty() {

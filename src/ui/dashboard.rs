@@ -292,5 +292,4 @@ mod tests {
     fn format_usd_small() {
         assert_eq!(format_usd(42.50), "$42.50");
     }
-
 }

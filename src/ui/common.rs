@@ -36,7 +36,8 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &App) {
     let poll_text = if app.paused {
         String::from(" | Paused")
     } else {
-        app.node.last_poll_duration_ms
+        app.node
+            .last_poll_duration_ms
             .map(|ms| format!(" | {:.0}ms", ms))
             .unwrap_or_default()
     };
@@ -63,8 +64,7 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &App) {
         ));
     }
 
-    let status = Paragraph::new(Line::from(spans))
-        .block(Block::default().borders(Borders::ALL));
+    let status = Paragraph::new(Line::from(spans)).block(Block::default().borders(Borders::ALL));
 
     frame.render_widget(status, chunks[1]);
 }

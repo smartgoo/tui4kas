@@ -133,7 +133,9 @@ async fn main() -> Result<()> {
                                 if new_config.url.is_some() {
                                     start_mining_polling(&new_rpc, &app_bg, &mut handles);
                                     analytics_streaming::start_analytics_streaming(
-                                        &new_rpc, &app_bg, &mut handles,
+                                        &new_rpc,
+                                        &app_bg,
+                                        &mut handles,
                                     );
                                 }
                                 let _ = reconnect_tx_bg.send((new_rpc, handles)).await;
@@ -143,8 +145,7 @@ async fn main() -> Result<()> {
                                 if let Ok(mgr) =
                                     RpcManager::new(None, &new_config.network, app_bg.clone()).await
                                 {
-                                    let _ =
-                                        reconnect_tx_bg.send((Arc::new(mgr), handles)).await;
+                                    let _ = reconnect_tx_bg.send((Arc::new(mgr), handles)).await;
                                 }
                             }
                         }

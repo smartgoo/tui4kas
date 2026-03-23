@@ -26,9 +26,7 @@ fn context_hint(app: &App) -> String {
         Tab::Mempool => "j/k select | Enter detail | g/G top/bottom | ? help".to_string(),
         Tab::BlockDag => "h/l focus | j/k select | Enter info | ? help".to_string(),
         Tab::Analytics => "Tab/1-7 switch | p pause | : command | ? help".to_string(),
-        Tab::RpcExplorer => {
-            "Up/Down method | Enter exec | j/k scroll | ? help".to_string()
-        }
+        Tab::RpcExplorer => "Up/Down method | Enter exec | j/k scroll | ? help".to_string(),
         Tab::Settings => {
             if app.settings.editing {
                 "Enter save | Esc cancel".to_string()

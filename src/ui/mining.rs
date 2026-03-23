@@ -55,16 +55,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     // --- Summary bar ---
     let hashrate_str = format_hashrate(mining.hashrate);
-    let summary_lines = vec![
-        Line::from(vec![
-            Span::styled(" Hashrate: ", Style::default().fg(Color::DarkGray)),
-            Span::raw(&hashrate_str),
-            Span::styled("    Unique Miners: ", Style::default().fg(Color::DarkGray)),
-            Span::raw(format!("{}", mining.unique_miners)),
-            Span::styled("    Blocks Analyzed: ", Style::default().fg(Color::DarkGray)),
-            Span::raw(format!("{}", mining.blocks_analyzed)),
-        ]),
-    ];
+    let summary_lines = vec![Line::from(vec![
+        Span::styled(" Hashrate: ", Style::default().fg(Color::DarkGray)),
+        Span::raw(&hashrate_str),
+        Span::styled("    Unique Miners: ", Style::default().fg(Color::DarkGray)),
+        Span::raw(format!("{}", mining.unique_miners)),
+        Span::styled(
+            "    Blocks Analyzed: ",
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::raw(format!("{}", mining.blocks_analyzed)),
+    ])];
     let summary_block = Block::default().borders(Borders::ALL).title(Span::styled(
         " Mining Summary ",
         Style::default()
@@ -158,7 +159,11 @@ fn render_table_panel(
     // Header line
     let header_line = Line::from(vec![
         Span::styled(
-            format!(" {:<width$}", headers[0], width = (inner.width as usize).saturating_sub(20).max(8)),
+            format!(
+                " {:<width$}",
+                headers[0],
+                width = (inner.width as usize).saturating_sub(20).max(8)
+            ),
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
@@ -210,10 +215,7 @@ fn render_table_panel(
             };
 
             lines.push(Line::from(vec![
-                Span::styled(
-                    format!(" {:<width$}", name, width = name_width),
-                    row_style,
-                ),
+                Span::styled(format!(" {:<width$}", name, width = name_width), row_style),
                 Span::styled(format!("{:>7}", count), row_style),
                 Span::styled(format!("{:>7.1}%", pct), row_style),
             ]));
@@ -242,11 +244,17 @@ fn render_fee_panel(frame: &mut Frame, area: Rect, mining: &MiningInfo) {
 
     let lines = vec![
         Line::from(vec![
-            Span::styled(" Avg Mass:           ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                " Avg Mass:           ",
+                Style::default().fg(Color::DarkGray),
+            ),
             Span::raw(format!("{:.2}", avg_mass)),
         ]),
         Line::from(vec![
-            Span::styled(" Min Mass:           ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                " Min Mass:           ",
+                Style::default().fg(Color::DarkGray),
+            ),
             Span::raw(if mining.mass_count > 0 {
                 mining.min_mass.to_string()
             } else {
@@ -254,7 +262,10 @@ fn render_fee_panel(frame: &mut Frame, area: Rect, mining: &MiningInfo) {
             }),
         ]),
         Line::from(vec![
-            Span::styled(" Max Mass:           ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                " Max Mass:           ",
+                Style::default().fg(Color::DarkGray),
+            ),
             Span::raw(if mining.mass_count > 0 {
                 mining.max_mass.to_string()
             } else {
@@ -262,11 +273,17 @@ fn render_fee_panel(frame: &mut Frame, area: Rect, mining: &MiningInfo) {
             }),
         ]),
         Line::from(vec![
-            Span::styled(" Total Mass:         ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                " Total Mass:         ",
+                Style::default().fg(Color::DarkGray),
+            ),
             Span::raw(format_number(mining.total_mass)),
         ]),
         Line::from(vec![
-            Span::styled(" Tx w/ Mass Data:    ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                " Tx w/ Mass Data:    ",
+                Style::default().fg(Color::DarkGray),
+            ),
             Span::raw(format_number(mining.mass_count as u64)),
         ]),
     ];

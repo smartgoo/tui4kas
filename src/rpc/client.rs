@@ -5,16 +5,13 @@ use std::time::Duration;
 use anyhow::Result;
 use futures::stream::{self, StreamExt};
 use kaspa_rpc_core::api::rpc::RpcApi;
-use kaspa_rpc_core::{
-    GetVirtualChainFromBlockV2Response, RpcDataVerbosityLevel, RpcHash,
-};
+use kaspa_rpc_core::{GetVirtualChainFromBlockV2Response, RpcDataVerbosityLevel, RpcHash};
 use kaspa_wrpc_client::prelude::*;
 use std::str::FromStr;
 use tokio::sync::RwLock;
 
 use crate::analytics::{BlockSummary, detect_protocol};
 use crate::app::{App, ConnectionStatus};
-
 
 pub struct RpcManager {
     client: Arc<KaspaRpcClient>,
@@ -84,7 +81,11 @@ impl RpcManager {
     }
 
     /// Run the polling loop inline (caller is responsible for spawning).
-    pub async fn run_polling_loop(self: &Arc<Self>, interval: Duration, app_state: Arc<RwLock<App>>) {
+    pub async fn run_polling_loop(
+        self: &Arc<Self>,
+        interval: Duration,
+        app_state: Arc<RwLock<App>>,
+    ) {
         let client = self.client.clone();
         let mut ticker = tokio::time::interval(interval);
         loop {
@@ -417,10 +418,7 @@ impl RpcManager {
 
         for chain_block in response.chain_block_accepted_transactions.iter() {
             let header = &chain_block.chain_block_header;
-            let hash = header
-                .hash
-                .map(|h| h.to_string())
-                .unwrap_or_default();
+            let hash = header.hash.map(|h| h.to_string()).unwrap_or_default();
             let timestamp_ms = header.timestamp.unwrap_or(0);
             let daa_score = header.daa_score.unwrap_or(0);
             let _ = daa_score; // available for sync progress tracking

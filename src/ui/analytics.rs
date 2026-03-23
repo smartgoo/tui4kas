@@ -3,9 +3,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    Axis, Bar, BarChart, BarGroup, Block, Borders, Chart, Dataset, Paragraph,
-};
+use ratatui::widgets::{Axis, Bar, BarChart, BarGroup, Block, Borders, Chart, Dataset, Paragraph};
 
 use crate::analytics::AggregatedView;
 use crate::app::{App, TimeWindow, ViewMode};
@@ -84,7 +82,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     // Use cached views (refreshed by analytics streaming task)
     let default_views: [AggregatedView; crate::app::ANALYTICS_PANEL_COUNT] = Default::default();
-    let views = app.analytics.cached_views.as_ref().unwrap_or(&default_views);
+    let views = app
+        .analytics
+        .cached_views
+        .as_ref()
+        .unwrap_or(&default_views);
 
     // Layout: 3 rows — top 3 columns, mid 2 columns, bottom full-width bar chart
     let rows = Layout::default()
@@ -189,10 +191,7 @@ fn render_fee_table(frame: &mut Frame, area: Rect, view: &AggregatedView) {
             Span::raw(format!("{:.2}", view.avg_fee)),
         ]),
         Line::from(vec![
-            Span::styled(
-                " Total Fees:      ",
-                Style::default().fg(Color::DarkGray),
-            ),
+            Span::styled(" Total Fees:      ", Style::default().fg(Color::DarkGray)),
             Span::raw(format_number(view.total_fees)),
         ]),
         Line::from(vec![
@@ -222,19 +221,31 @@ fn render_fee_table(frame: &mut Frame, area: Rect, view: &AggregatedView) {
 fn render_tx_table(frame: &mut Frame, area: Rect, view: &AggregatedView) {
     let lines = vec![
         Line::from(vec![
-            Span::styled(" Time Periods:       ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                " Time Periods:       ",
+                Style::default().fg(Color::DarkGray),
+            ),
             Span::raw(format_number(view.blocks_analyzed as u64)),
         ]),
         Line::from(vec![
-            Span::styled(" Total Transactions: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                " Total Transactions: ",
+                Style::default().fg(Color::DarkGray),
+            ),
             Span::raw(format_number(view.tx_count as u64)),
         ]),
         Line::from(vec![
-            Span::styled(" Unique Senders:     ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                " Unique Senders:     ",
+                Style::default().fg(Color::DarkGray),
+            ),
             Span::raw(view.top_senders.len().to_string()),
         ]),
         Line::from(vec![
-            Span::styled(" Unique Receivers:   ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                " Unique Receivers:   ",
+                Style::default().fg(Color::DarkGray),
+            ),
             Span::raw(view.top_receivers.len().to_string()),
         ]),
     ];
@@ -253,8 +264,7 @@ fn render_protocol_table(frame: &mut Frame, area: Rect, view: &AggregatedView) {
         return;
     }
 
-    let fee_map: std::collections::HashMap<_, _> =
-        view.protocol_fees.iter().cloned().collect();
+    let fee_map: std::collections::HashMap<_, _> = view.protocol_fees.iter().cloned().collect();
 
     let mut lines = vec![Line::from(vec![
         Span::styled(
@@ -291,12 +301,7 @@ fn render_protocol_table(frame: &mut Frame, area: Rect, view: &AggregatedView) {
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-fn render_address_table(
-    frame: &mut Frame,
-    area: Rect,
-    view: &AggregatedView,
-    is_senders: bool,
-) {
+fn render_address_table(frame: &mut Frame, area: Rect, view: &AggregatedView, is_senders: bool) {
     let entries = if is_senders {
         &view.top_senders
     } else {
@@ -458,9 +463,7 @@ fn render_protocol_chart(frame: &mut Frame, area: Rect, view: &AggregatedView) {
 
     let bar_chart = BarChart::default()
         .data(BarGroup::default().bars(&bars))
-        .bar_width(
-            (area.width as usize / (view.protocol_counts.len().max(1) + 1)).max(3) as u16,
-        )
+        .bar_width((area.width as usize / (view.protocol_counts.len().max(1) + 1)).max(3) as u16)
         .bar_gap(1);
 
     frame.render_widget(bar_chart, area);
@@ -582,18 +585,12 @@ fn render_tx_count_bars(frame: &mut Frame, area: Rect, view: &AggregatedView, tw
 // --- Helpers ---
 
 fn compute_bounds(data: &[(f64, f64)]) -> (f64, f64, f64, f64) {
-    let x_min = data
-        .iter()
-        .map(|(x, _)| *x)
-        .fold(f64::INFINITY, f64::min);
+    let x_min = data.iter().map(|(x, _)| *x).fold(f64::INFINITY, f64::min);
     let x_max = data
         .iter()
         .map(|(x, _)| *x)
         .fold(f64::NEG_INFINITY, f64::max);
-    let y_min = data
-        .iter()
-        .map(|(_, y)| *y)
-        .fold(f64::INFINITY, f64::min);
+    let y_min = data.iter().map(|(_, y)| *y).fold(f64::INFINITY, f64::min);
     let y_max = data
         .iter()
         .map(|(_, y)| *y)

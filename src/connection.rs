@@ -42,7 +42,11 @@ pub fn start_mining_polling(
         loop {
             ticker.tick().await;
             let app_guard = app_for_mining.read().await;
-            let is_synced = app_guard.node.server_info.as_ref().is_some_and(|s| s.is_synced);
+            let is_synced = app_guard
+                .node
+                .server_info
+                .as_ref()
+                .is_some_and(|s| s.is_synced);
             let is_paused = app_guard.paused;
             drop(app_guard);
             if !is_paused
@@ -82,7 +86,10 @@ pub async fn create_and_start_rpc(
         let mut connected = false;
         for attempt in 0..max_attempts {
             match rpc_for_connect.connect().await {
-                Ok(_) => { connected = true; break; }
+                Ok(_) => {
+                    connected = true;
+                    break;
+                }
                 Err(_) if attempt < max_attempts - 1 => {
                     tokio::time::sleep(Duration::from_millis(500)).await;
                 }
@@ -90,7 +97,9 @@ pub async fn create_and_start_rpc(
             }
         }
         if connected {
-            rpc_for_connect.run_polling_loop(Duration::from_millis(interval), app_clone).await;
+            rpc_for_connect
+                .run_polling_loop(Duration::from_millis(interval), app_clone)
+                .await;
         }
     }));
 
