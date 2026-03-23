@@ -159,6 +159,7 @@ pub fn format_number(n: u64) -> String {
     result.chars().rev().collect()
 }
 
+#[allow(dead_code)]
 pub fn shorten_address(addr: &str, prefix_len: usize, suffix_len: usize) -> String {
     let char_count = addr.chars().count();
     if char_count > prefix_len + suffix_len + 3 {
@@ -178,6 +179,10 @@ pub struct MiningInfo {
     pub blocks_analyzed: usize,
     pub pools: Vec<(String, usize)>,
     pub node_versions: Vec<(String, usize)>,
+    pub total_fees: u64,
+    pub min_fee: u64,
+    pub max_fee: u64,
+    pub fee_count: usize,
 }
 
 #[derive(Debug, Clone)]

@@ -2,15 +2,11 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use crate::app::App;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
-    if super::common::render_syncing_guard(frame, area, app, "RPC Cmds") {
-        return;
-    }
-
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(30), Constraint::Min(0)])
@@ -21,43 +17,43 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_method_list(frame: &mut Frame, area: Rect, app: &App) {
-    let items: Vec<ListItem> = app
+    let block = Block::default().borders(Borders::ALL).title(Span::styled(
+        " RPC Methods ",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let selected = app.rpc_explorer.selected_method;
+    let visible_rows = inner.height as usize;
+    let scroll = if selected >= visible_rows {
+        selected - visible_rows + 1
+    } else {
+        0
+    };
+
+    let lines: Vec<Line> = app
         .rpc_explorer
         .available_methods
         .iter()
         .enumerate()
+        .skip(scroll)
+        .take(visible_rows)
         .map(|(i, method)| {
-            let style = if i == app.rpc_explorer.selected_method {
+            let style = if i == selected {
+                Style::default().bg(Color::DarkGray).fg(Color::White)
+            } else {
                 Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::White)
             };
-
-            let prefix = if i == app.rpc_explorer.selected_method {
-                "▸ "
-            } else {
-                "  "
-            };
-
-            ListItem::new(Line::from(Span::styled(
-                format!("{}{}", prefix, method),
-                style,
-            )))
+            let prefix = if i == selected { "▸ " } else { "  " };
+            Line::from(Span::styled(format!("{}{}", prefix, method), style))
         })
         .collect();
 
-    let list = List::new(items).block(
-        Block::default().borders(Borders::ALL).title(Span::styled(
-            " RPC Methods ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )),
-    );
-
-    frame.render_widget(list, area);
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 fn render_response(frame: &mut Frame, area: Rect, app: &App) {

@@ -8,15 +8,11 @@ use ratatui::widgets::{
 };
 
 use crate::analytics::AggregatedView;
-use crate::app::{App, ViewMode};
+use crate::app::{App, TimeWindow, ViewMode};
 use crate::rpc::types::format_number;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
-    if super::common::render_syncing_guard(frame, area, app, "Analytics") {
-        return;
-    }
-
-    if !app.has_direct_node {
+    if !app.has_direct_url() {
         let block = Block::default().borders(Borders::ALL).title(Span::styled(
             " Analytics ",
             Style::default()
@@ -36,18 +32,27 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let mut banner_lines: Vec<Line> = Vec::new();
 
     // Sync progress banner
-    if let Some((current, tip)) = app.analytics.sync_progress {
-        let pct = if tip > 0 {
-            (current as f64 / tip as f64 * 100.0).min(100.0)
+    if let Some(ref progress) = app.analytics.sync_progress {
+        let range = progress.tip_daa.saturating_sub(progress.start_daa);
+        let done = progress.last_daa.saturating_sub(progress.start_daa);
+        let pct = if range > 0 {
+            (done as f64 / range as f64 * 100.0).min(100.0)
         } else {
             0.0
         };
+        let mode = if progress.from_pruning_point {
+            "from pruning point"
+        } else {
+            "from current"
+        };
         banner_lines.push(Line::from(Span::styled(
             format!(
-                " Syncing analytics... DAA {}/{} ({:.1}%)",
-                format_number(current),
-                format_number(tip),
-                pct
+                " Analyzing {} — DAA {}/{} ({:.1}%) | last analyzed: {}",
+                mode,
+                format_number(progress.start_daa),
+                format_number(progress.tip_daa),
+                pct,
+                format_number(progress.last_daa),
             ),
             Style::default().fg(Color::Yellow),
         )));
@@ -78,22 +83,26 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     // Use cached views (refreshed by analytics streaming task)
-    let default_views: [AggregatedView; 5] = Default::default();
+    let default_views: [AggregatedView; 6] = Default::default();
     let views = app.analytics.cached_views.as_ref().unwrap_or(&default_views);
 
-    // Layout: 3 rows, top 2 split into 2 columns, bottom full width
+    // Layout: 3 rows — top 3 columns, mid 2 columns, bottom full-width bar chart
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Percentage(33),
-            Constraint::Percentage(34),
             Constraint::Percentage(33),
+            Constraint::Percentage(34),
         ])
         .split(main_area);
 
     let top_cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints([
+            Constraint::Percentage(33),
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
+        ])
         .split(rows[0]);
 
     let mid_cols = Layout::default()
@@ -101,7 +110,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(rows[1]);
 
-    let panel_areas = [top_cols[0], top_cols[1], mid_cols[0], mid_cols[1], rows[2]];
+    let panel_areas = [
+        top_cols[0],
+        top_cols[1],
+        top_cols[2],
+        mid_cols[0],
+        mid_cols[1],
+        rows[2],
+    ];
 
     let panel_names = [
         "Fee Analysis",
@@ -109,6 +125,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         "Protocols",
         "Top Senders",
         "Top Receivers",
+        "Tx Counts",
     ];
 
     for (i, (&panel_area, name)) in panel_areas.iter().zip(panel_names.iter()).enumerate() {
@@ -157,6 +174,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             (3, ViewMode::Chart) => render_address_chart(frame, inner, &views[3], "Senders"),
             (4, ViewMode::Table) => render_address_table(frame, inner, &views[4], false),
             (4, ViewMode::Chart) => render_address_chart(frame, inner, &views[4], "Receivers"),
+            (5, _) => render_tx_count_bars(frame, inner, &views[5], app.analytics.time_windows[5]),
             _ => {}
         }
     }
@@ -204,40 +222,20 @@ fn render_fee_table(frame: &mut Frame, area: Rect, view: &AggregatedView) {
 fn render_tx_table(frame: &mut Frame, area: Rect, view: &AggregatedView) {
     let lines = vec![
         Line::from(vec![
-            Span::styled(
-                " Time Periods:      ",
-                Style::default().fg(Color::DarkGray),
-            ),
+            Span::styled(" Time Periods:       ", Style::default().fg(Color::DarkGray)),
             Span::raw(format_number(view.blocks_analyzed as u64)),
         ]),
         Line::from(vec![
-            Span::styled(
-                " Total Transactions:",
-                Style::default().fg(Color::DarkGray),
-            ),
-            Span::raw(format!(" {}", format_number(view.tx_count as u64))),
+            Span::styled(" Total Transactions: ", Style::default().fg(Color::DarkGray)),
+            Span::raw(format_number(view.tx_count as u64)),
         ]),
         Line::from(vec![
-            Span::styled(
-                " Unique Senders:    ",
-                Style::default().fg(Color::DarkGray),
-            ),
-            Span::raw(
-                view.top_senders
-                    .len()
-                    .to_string(),
-            ),
+            Span::styled(" Unique Senders:     ", Style::default().fg(Color::DarkGray)),
+            Span::raw(view.top_senders.len().to_string()),
         ]),
         Line::from(vec![
-            Span::styled(
-                " Unique Receivers:  ",
-                Style::default().fg(Color::DarkGray),
-            ),
-            Span::raw(
-                view.top_receivers
-                    .len()
-                    .to_string(),
-            ),
+            Span::styled(" Unique Receivers:   ", Style::default().fg(Color::DarkGray)),
+            Span::raw(view.top_receivers.len().to_string()),
         ]),
     ];
     frame.render_widget(Paragraph::new(lines), area);
@@ -255,6 +253,9 @@ fn render_protocol_table(frame: &mut Frame, area: Rect, view: &AggregatedView) {
         return;
     }
 
+    let fee_map: std::collections::HashMap<_, _> =
+        view.protocol_fees.iter().cloned().collect();
+
     let mut lines = vec![Line::from(vec![
         Span::styled(
             "  Protocol",
@@ -262,9 +263,16 @@ fn render_protocol_table(frame: &mut Frame, area: Rect, view: &AggregatedView) {
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("          "),
+        Span::raw("      "),
         Span::styled(
             "Txs",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("          "),
+        Span::styled(
+            "Fees",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
@@ -272,14 +280,11 @@ fn render_protocol_table(frame: &mut Frame, area: Rect, view: &AggregatedView) {
     ])];
 
     for (proto, count) in &view.protocol_counts {
+        let fees = fee_map.get(proto).copied().unwrap_or(0);
         lines.push(Line::from(vec![
-            Span::raw(format!("  {:<18} ", proto.label())),
-            Span::styled(
-                format_number(*count as u64),
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Span::raw(format!("  {:<14} ", proto.label())),
+            Span::raw(format!("{:>8}  ", format_number(*count as u64))),
+            Span::raw(format_number(fees)),
         ]));
     }
 
@@ -329,12 +334,7 @@ fn render_address_table(
     for (addr, count) in entries {
         lines.push(Line::from(vec![
             Span::raw(format!("  {:<45} ", addr)),
-            Span::styled(
-                format_number(*count as u64),
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Span::raw(format_number(*count as u64)),
         ]));
     }
 
@@ -507,6 +507,76 @@ fn render_address_chart(frame: &mut Frame, area: Rect, view: &AggregatedView, la
         .bar_gap(1);
 
     frame.render_widget(bar_chart, area);
+}
+
+fn render_tx_count_bars(frame: &mut Frame, area: Rect, view: &AggregatedView, tw: TimeWindow) {
+    if view.tx_over_time.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                " No transaction data yet",
+                Style::default().fg(Color::DarkGray),
+            )),
+            area,
+        );
+        return;
+    }
+
+    let period_label = match tw {
+        TimeWindow::OneMin => "sec",
+        TimeWindow::FifteenMin => "min",
+        TimeWindow::ThirtyMin => "min",
+        TimeWindow::OneHour => "min",
+        TimeWindow::SixHour => "10m",
+        TimeWindow::TwelveHour => "10m",
+        TimeWindow::TwentyFourHour => "10m",
+    };
+
+    let data = &view.tx_over_time;
+    let max_bars = (area.width as usize / 4).max(1);
+    let skip = data.len().saturating_sub(max_bars);
+    let visible: Vec<_> = data.iter().skip(skip).collect();
+
+    let bars: Vec<Bar> = visible
+        .iter()
+        .enumerate()
+        .map(|(i, (_ts, count))| {
+            let label = if visible.len() <= 20 || i % (visible.len() / 10).max(1) == 0 {
+                format!("{}", i + 1)
+            } else {
+                String::new()
+            };
+            Bar::default()
+                .label(label.into())
+                .value(*count as u64)
+                .style(Style::default().fg(Color::Green))
+        })
+        .collect();
+
+    if bars.is_empty() {
+        return;
+    }
+
+    let bar_width = ((area.width as usize) / (bars.len() + 1)).clamp(1, 8) as u16;
+
+    let bar_chart = BarChart::default()
+        .data(BarGroup::default().bars(&bars))
+        .bar_width(bar_width)
+        .bar_gap(if bar_width > 1 { 1 } else { 0 });
+
+    // Render period label at bottom-left, then bar chart above
+    let inner = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(area);
+
+    frame.render_widget(bar_chart, inner[0]);
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            format!(" per {}", period_label),
+            Style::default().fg(Color::DarkGray),
+        )),
+        inner[1],
+    );
 }
 
 // --- Helpers ---

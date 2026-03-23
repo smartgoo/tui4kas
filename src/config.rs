@@ -4,104 +4,41 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DaemonConfig {
-    // General
+pub struct AppConfig {
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default = "default_network")]
     pub network: String,
-    pub utxo_index: bool,
-    #[serde(default)]
-    pub archival: bool,
-    pub ram_scale: f64,
-    pub log_level: String,
-    pub async_threads: usize,
-    #[serde(default)]
-    pub auto_start_daemon: bool,
-
-    // Networking
-    #[serde(default)]
-    pub listen: Option<String>,
-    #[serde(default)]
-    pub externalip: Option<String>,
-    #[serde(default = "default_outpeers")]
-    pub outbound_target: usize,
-    #[serde(default = "default_inbound_limit")]
-    pub inbound_limit: usize,
-    #[serde(default)]
-    pub connect_peers: String,
-    #[serde(default)]
-    pub add_peers: String,
-    #[serde(default)]
-    pub disable_upnp: bool,
-    #[serde(default)]
-    pub disable_dns_seed: bool,
-
-    // Storage
-    pub app_dir: String,
-    #[serde(default = "default_rocksdb_preset")]
-    pub rocksdb_preset: String,
-    #[serde(default)]
-    pub rocksdb_wal_dir: Option<String>,
-    #[serde(default)]
-    pub rocksdb_cache_size: Option<usize>,
-    #[serde(default)]
-    pub retention_period_days: Option<f64>,
-    #[serde(default)]
-    pub reset_db: bool,
-    #[serde(default = "default_rpc_max_clients")]
-    pub rpc_max_clients: usize,
-
-    // Performance
-    #[serde(default)]
-    pub perf_metrics: bool,
+    #[serde(default = "default_refresh_interval_ms")]
+    pub refresh_interval_ms: u64,
+    #[serde(default = "default_true")]
+    pub analyze_from_pruning_point: bool,
 }
 
-fn default_rocksdb_preset() -> String {
-    "default".to_string()
-}
-fn default_outpeers() -> usize {
-    8
-}
-fn default_inbound_limit() -> usize {
-    128
-}
-fn default_rpc_max_clients() -> usize {
-    128
+fn default_network() -> String {
+    "mainnet".to_string()
 }
 
-impl Default for DaemonConfig {
+fn default_refresh_interval_ms() -> u64 {
+    1000
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            network: "mainnet".to_string(),
-            utxo_index: false,
-            archival: false,
-            ram_scale: 1.0,
-            app_dir: default_app_dir(),
-            log_level: "WARN".to_string(),
-            async_threads: num_cpus::get(),
-            auto_start_daemon: false,
-
-            listen: None,
-            externalip: None,
-            outbound_target: 8,
-            inbound_limit: 128,
-            connect_peers: String::new(),
-            add_peers: String::new(),
-            disable_upnp: false,
-            disable_dns_seed: false,
-
-            rocksdb_preset: "default".to_string(),
-            rocksdb_wal_dir: None,
-            rocksdb_cache_size: None,
-            retention_period_days: None,
-            reset_db: false,
-            rpc_max_clients: 128,
-
-            perf_metrics: false,
+            url: None,
+            network: default_network(),
+            refresh_interval_ms: default_refresh_interval_ms(),
+            analyze_from_pruning_point: true,
         }
     }
 }
 
-#[allow(dead_code)]
-impl DaemonConfig {
+impl AppConfig {
     pub fn config_path() -> PathBuf {
         dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
@@ -133,14 +70,6 @@ impl DaemonConfig {
         &["mainnet", "testnet-10", "testnet-11"]
     }
 
-    pub fn valid_log_levels() -> &'static [&'static str] {
-        &["TRACE", "DEBUG", "INFO", "WARN", "ERROR"]
-    }
-
-    pub fn valid_rocksdb_presets() -> &'static [&'static str] {
-        &["default", "hdd"]
-    }
-
     pub fn cycle_network(&mut self) {
         let networks = Self::valid_networks();
         let idx = networks
@@ -149,38 +78,6 @@ impl DaemonConfig {
             .unwrap_or(0);
         self.network = networks[(idx + 1) % networks.len()].to_string();
     }
-
-    pub fn cycle_log_level(&mut self) {
-        let levels = Self::valid_log_levels();
-        let idx = levels
-            .iter()
-            .position(|l| *l == self.log_level)
-            .unwrap_or(3);
-        self.log_level = levels[(idx + 1) % levels.len()].to_string();
-    }
-
-    pub fn cycle_rocksdb_preset(&mut self) {
-        let presets = Self::valid_rocksdb_presets();
-        let idx = presets
-            .iter()
-            .position(|p| *p == self.rocksdb_preset)
-            .unwrap_or(0);
-        self.rocksdb_preset = presets[(idx + 1) % presets.len()].to_string();
-    }
-
-    /// Parse comma-separated peer strings into Vec of trimmed non-empty strings
-    pub fn parse_peers(s: &str) -> Vec<String> {
-        s.split(',')
-            .map(|p| p.trim().to_string())
-            .filter(|p| !p.is_empty())
-            .collect()
-    }
-}
-
-fn default_app_dir() -> String {
-    dirs::home_dir()
-        .map(|h| h.join(".tui4kas").to_string_lossy().into_owned())
-        .unwrap_or_else(|| ".tui4kas".to_string())
 }
 
 #[cfg(test)]
@@ -189,72 +86,32 @@ mod tests {
 
     #[test]
     fn default_config_values() {
-        let config = DaemonConfig::default();
+        let config = AppConfig::default();
+        assert_eq!(config.url, None);
         assert_eq!(config.network, "mainnet");
-        assert!(!config.utxo_index);
-        assert!(!config.archival);
-        assert!((config.ram_scale - 1.0).abs() < f64::EPSILON);
-        assert_eq!(config.log_level, "WARN");
-        assert!(config.async_threads > 0);
-        assert_eq!(config.outbound_target, 8);
-        assert_eq!(config.inbound_limit, 128);
-        assert_eq!(config.rpc_max_clients, 128);
-        assert_eq!(config.rocksdb_preset, "default");
-        assert!(!config.perf_metrics);
-        assert!(!config.disable_upnp);
-        assert!(!config.disable_dns_seed);
-        assert!(!config.reset_db);
+        assert_eq!(config.refresh_interval_ms, 1000);
+        assert!(config.analyze_from_pruning_point);
     }
 
     #[test]
     fn serialize_deserialize_roundtrip() {
-        let config = DaemonConfig {
+        let config = AppConfig {
+            url: Some("ws://127.0.0.1:17110".to_string()),
             network: "testnet-10".to_string(),
-            utxo_index: true,
-            archival: true,
-            ram_scale: 2.5,
-            app_dir: "/tmp/test".to_string(),
-            log_level: "DEBUG".to_string(),
-            async_threads: 4,
-            auto_start_daemon: true,
-            listen: Some("0.0.0.0:16111".to_string()),
-            externalip: None,
-            outbound_target: 16,
-            inbound_limit: 64,
-            connect_peers: "1.2.3.4:16111".to_string(),
-            add_peers: String::new(),
-            disable_upnp: true,
-            disable_dns_seed: false,
-            rocksdb_preset: "hdd".to_string(),
-            rocksdb_wal_dir: Some("/fast/wal".to_string()),
-            rocksdb_cache_size: Some(512),
-            retention_period_days: Some(30.0),
-            reset_db: false,
-            rpc_max_clients: 256,
-            perf_metrics: true,
+            refresh_interval_ms: 500,
+            analyze_from_pruning_point: false,
         };
         let serialized = toml::to_string_pretty(&config).unwrap();
-        let deserialized: DaemonConfig = toml::from_str(&serialized).unwrap();
+        let deserialized: AppConfig = toml::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.url, Some("ws://127.0.0.1:17110".to_string()));
         assert_eq!(deserialized.network, "testnet-10");
-        assert!(deserialized.utxo_index);
-        assert!(deserialized.archival);
-        assert!((deserialized.ram_scale - 2.5).abs() < f64::EPSILON);
-        assert_eq!(deserialized.log_level, "DEBUG");
-        assert_eq!(deserialized.async_threads, 4);
-        assert_eq!(deserialized.outbound_target, 16);
-        assert_eq!(deserialized.inbound_limit, 64);
-        assert_eq!(deserialized.connect_peers, "1.2.3.4:16111");
-        assert!(deserialized.disable_upnp);
-        assert_eq!(deserialized.rocksdb_preset, "hdd");
-        assert_eq!(deserialized.rocksdb_wal_dir, Some("/fast/wal".to_string()));
-        assert_eq!(deserialized.rocksdb_cache_size, Some(512));
-        assert_eq!(deserialized.rpc_max_clients, 256);
-        assert!(deserialized.perf_metrics);
+        assert_eq!(deserialized.refresh_interval_ms, 500);
+        assert!(!deserialized.analyze_from_pruning_point);
     }
 
     #[test]
     fn cycle_network() {
-        let mut config = DaemonConfig::default();
+        let mut config = AppConfig::default();
         assert_eq!(config.network, "mainnet");
         config.cycle_network();
         assert_eq!(config.network, "testnet-10");
@@ -265,52 +122,26 @@ mod tests {
     }
 
     #[test]
-    fn cycle_log_level() {
-        let mut config = DaemonConfig::default();
-        assert_eq!(config.log_level, "WARN");
-        config.cycle_log_level();
-        assert_eq!(config.log_level, "ERROR");
-        config.cycle_log_level();
-        assert_eq!(config.log_level, "TRACE");
-    }
-
-    #[test]
-    fn cycle_rocksdb_preset() {
-        let mut config = DaemonConfig::default();
-        assert_eq!(config.rocksdb_preset, "default");
-        config.cycle_rocksdb_preset();
-        assert_eq!(config.rocksdb_preset, "hdd");
-        config.cycle_rocksdb_preset();
-        assert_eq!(config.rocksdb_preset, "default");
-    }
-
-    #[test]
-    fn parse_peers() {
-        assert_eq!(
-            DaemonConfig::parse_peers("1.2.3.4:16111, 5.6.7.8:16111"),
-            vec!["1.2.3.4:16111", "5.6.7.8:16111"]
-        );
-        assert!(DaemonConfig::parse_peers("").is_empty());
-        assert!(DaemonConfig::parse_peers("  ,  ").is_empty());
-    }
-
-    #[test]
     fn deserialize_minimal_config() {
-        // Existing configs without new fields should still load with defaults
         let toml_str = r#"
 network = "mainnet"
-utxo_index = false
-ram_scale = 1.0
-app_dir = "/tmp/test"
-log_level = "WARN"
-async_threads = 4
 "#;
-        let config: DaemonConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.outbound_target, 8);
-        assert_eq!(config.inbound_limit, 128);
-        assert_eq!(config.rpc_max_clients, 128);
-        assert!(!config.archival);
-        assert!(!config.perf_metrics);
-        assert_eq!(config.rocksdb_preset, "default");
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.url, None);
+        assert_eq!(config.network, "mainnet");
+        assert_eq!(config.refresh_interval_ms, 1000);
+    }
+
+    #[test]
+    fn deserialize_with_url() {
+        let toml_str = r#"
+url = "ws://10.0.0.1:17110"
+network = "testnet-11"
+refresh_interval_ms = 2000
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.url, Some("ws://10.0.0.1:17110".to_string()));
+        assert_eq!(config.network, "testnet-11");
+        assert_eq!(config.refresh_interval_ms, 2000);
     }
 }

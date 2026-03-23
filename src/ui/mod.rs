@@ -4,10 +4,10 @@ mod command;
 pub(crate) mod common;
 mod dashboard;
 mod help;
-mod integrated_node;
 mod mempool;
 mod mining;
 mod rpc_explorer;
+mod settings;
 
 use ratatui::Frame;
 
@@ -42,7 +42,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             Tab::BlockDag => blockdag::render(frame, chunks[1], app),
             Tab::Analytics => analytics::render(frame, chunks[1], app),
             Tab::RpcExplorer => rpc_explorer::render(frame, chunks[1], app),
-            Tab::IntegratedNode => integrated_node::render(frame, chunks[1], app),
+            Tab::Settings => settings::render(frame, chunks[1], app),
         }
     }
 

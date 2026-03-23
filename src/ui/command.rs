@@ -29,14 +29,11 @@ fn context_hint(app: &App) -> String {
         Tab::RpcExplorer => {
             "Up/Down method | Enter exec | j/k scroll | ? help".to_string()
         }
-        Tab::IntegratedNode => {
-            let state = &app.integrated_node;
-            if state.editing {
+        Tab::Settings => {
+            if app.settings.editing {
                 "Enter save | Esc cancel".to_string()
-            } else if state.is_running() {
-                "j/k scroll | g/G top/bottom | Enter stop | ? help".to_string()
             } else {
-                "Up/Down nav | Enter edit/toggle | r reload | ? help".to_string()
+                "Up/Down nav | Enter edit/cycle | r reload | ? help".to_string()
             }
         }
     }

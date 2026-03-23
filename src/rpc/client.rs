@@ -14,7 +14,7 @@ use tokio::sync::RwLock;
 
 use crate::analytics::{BlockSummary, detect_protocol};
 use crate::app::{App, ConnectionStatus};
-use crate::rpc::types::shorten_address;
+
 
 pub struct RpcManager {
     client: Arc<KaspaRpcClient>,
@@ -83,109 +83,80 @@ impl RpcManager {
         Ok(())
     }
 
-    /// Start polling from an Arc reference (used when polling is deferred until after connection).
-    pub fn start_polling_shared(self: &Arc<Self>, interval: Duration, app_state: Arc<RwLock<App>>) {
+    /// Run the polling loop inline (caller is responsible for spawning).
+    pub async fn run_polling_loop(self: &Arc<Self>, interval: Duration, app_state: Arc<RwLock<App>>) {
         let client = self.client.clone();
-        tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(interval);
-            loop {
-                ticker.tick().await;
-                if !app_state.read().await.paused {
-                    Self::poll_once(&client, &app_state).await;
-                }
+        let mut ticker = tokio::time::interval(interval);
+        loop {
+            ticker.tick().await;
+            if !app_state.read().await.paused {
+                Self::poll_once(&client, &app_state).await;
             }
-        });
+        }
     }
 
     async fn poll_once(client: &KaspaRpcClient, state: &Arc<RwLock<App>>) {
         let start = std::time::Instant::now();
+        let mut errors: Vec<String> = Vec::new();
 
-        // Check if daemon is active and not yet synced — only poll server_info.
-        // Write lock is acquired once for server_info + is_node_syncing() check,
-        // then dropped before the parallel RPC calls to avoid blocking the UI.
-        let server_info = client.get_server_info().await;
+        let (server_info, dag_info, mempool, supply, fee_estimate, sink_blue_score) = tokio::join!(
+            client.get_server_info(),
+            client.get_block_dag_info(),
+            client.get_mempool_entries(true, false),
+            client.get_coin_supply(),
+            client.get_fee_estimate(),
+            client.get_sink_blue_score(),
+        );
 
         let mut app = state.write().await;
-        let mut errors: Vec<String> = Vec::new();
 
         match server_info {
             Ok(v) => app.node.server_info = Some(v.into()),
             Err(e) => errors.push(format!("server_info: {}", e)),
         }
-
-        let is_daemon_syncing = app.is_node_syncing();
-
-        // Release lock before making remaining RPC calls
-        drop(app);
-
-        if !is_daemon_syncing {
-            let (dag_info, mempool, supply, fee_estimate, sink_blue_score) = tokio::join!(
-                client.get_block_dag_info(),
-                client.get_mempool_entries(true, false),
-                client.get_coin_supply(),
-                client.get_fee_estimate(),
-                client.get_sink_blue_score(),
-            );
-
-            let mut app = state.write().await;
-
-            match dag_info {
-                Ok(v) => {
-                    let info: crate::rpc::types::DagInfo = v.into();
-                    app.node.dag_visualizer
-                        .update(&info.tip_hashes, &info.virtual_parent_hashes);
-                    app.node.dag_info = Some(info);
-                }
-                Err(e) => errors.push(format!("dag_info: {}", e)),
+        match dag_info {
+            Ok(v) => {
+                let info: crate::rpc::types::DagInfo = v.into();
+                app.node.dag_info = Some(info);
             }
-            match mempool {
-                Ok(v) => app.node.mempool_state = Some(v.into()),
-                Err(e) => errors.push(format!("mempool: {}", e)),
-            }
-            match supply {
-                Ok(v) => app.node.coin_supply = Some(v.into()),
-                Err(e) => errors.push(format!("coin_supply: {}", e)),
-            }
-            match fee_estimate {
-                Ok(v) => app.node.fee_estimate = Some(v.into()),
-                Err(e) => errors.push(format!("fee_estimate: {}", e)),
-            }
-            match sink_blue_score {
-                Ok(v) => app.node.sink_blue_score = Some(v),
-                Err(e) => errors.push(format!("sink_blue_score: {}", e)),
-            }
-
-            if let Some(dag) = app.node.dag_info.clone() {
-                let blue = app.node.sink_blue_score;
-                app.node.dag_stats.update(&dag, blue);
-            }
-
-            app.node.node_url = client.url();
-            if let Some(desc) = client.node_descriptor() {
-                app.node.node_uid = Some(desc.uid.clone());
-            }
-
-            let poll_duration_ms = start.elapsed().as_secs_f64() * 1000.0;
-            app.node.last_refresh = Some(std::time::Instant::now());
-            app.node.last_poll_duration_ms = Some(poll_duration_ms);
-            app.node.last_error = if errors.is_empty() {
-                None
-            } else {
-                Some(errors.join("; "))
-            };
-            app.dirty = true;
-        } else {
-            let mut app = state.write().await;
-            let poll_duration_ms = start.elapsed().as_secs_f64() * 1000.0;
-            app.node.last_refresh = Some(std::time::Instant::now());
-            app.node.last_poll_duration_ms = Some(poll_duration_ms);
-            app.node.last_error = if errors.is_empty() {
-                None
-            } else {
-                Some(errors.join("; "))
-            };
-            app.dirty = true;
+            Err(e) => errors.push(format!("dag_info: {}", e)),
         }
+        match mempool {
+            Ok(v) => app.node.mempool_state = Some(v.into()),
+            Err(e) => errors.push(format!("mempool: {}", e)),
+        }
+        match supply {
+            Ok(v) => app.node.coin_supply = Some(v.into()),
+            Err(e) => errors.push(format!("coin_supply: {}", e)),
+        }
+        match fee_estimate {
+            Ok(v) => app.node.fee_estimate = Some(v.into()),
+            Err(e) => errors.push(format!("fee_estimate: {}", e)),
+        }
+        match sink_blue_score {
+            Ok(v) => app.node.sink_blue_score = Some(v),
+            Err(e) => errors.push(format!("sink_blue_score: {}", e)),
+        }
+
+        if let Some(dag) = app.node.dag_info.clone() {
+            let blue = app.node.sink_blue_score;
+            app.node.dag_stats.update(&dag, blue);
+        }
+
+        app.node.node_url = client.url();
+        if let Some(desc) = client.node_descriptor() {
+            app.node.node_uid = Some(desc.uid.clone());
+        }
+
+        let poll_duration_ms = start.elapsed().as_secs_f64() * 1000.0;
+        app.node.last_refresh = Some(std::time::Instant::now());
+        app.node.last_poll_duration_ms = Some(poll_duration_ms);
+        app.node.last_error = if errors.is_empty() {
+            None
+        } else {
+            Some(errors.join("; "))
+        };
+        app.dirty = true;
     }
 
     pub async fn execute_rpc_call(&self, method: &str) -> Result<String> {
@@ -316,6 +287,10 @@ impl RpcManager {
         let mut miner_counts: HashMap<String, usize> = HashMap::new();
         let mut pool_counts: HashMap<String, usize> = HashMap::new();
         let mut version_counts: HashMap<String, usize> = HashMap::new();
+        let mut total_fees: u64 = 0;
+        let mut min_fee: u64 = u64::MAX;
+        let mut max_fee: u64 = 0;
+        let mut fee_count: usize = 0;
 
         // Fetch blocks in parallel (10 concurrent)
         let hashes: Vec<_> = sample_hashes.to_vec();
@@ -337,8 +312,7 @@ impl RpcManager {
                     && let Some(ref verbose) = output.verbose_data
                 {
                     let addr = verbose.script_public_key_address.to_string();
-                    let short_addr = crate::rpc::types::shorten_address(&addr, 10, 6);
-                    *miner_counts.entry(short_addr).or_insert(0) += 1;
+                    *miner_counts.entry(addr).or_insert(0) += 1;
                 }
 
                 // Parse coinbase payload for pool and version info
@@ -351,6 +325,23 @@ impl RpcManager {
                     *version_counts.entry(version).or_insert(0) += 1;
                 }
             }
+
+            // Extract fees from non-coinbase transactions
+            for tx in block.transactions.iter().skip(1) {
+                if let Some(ref verbose) = tx.verbose_data {
+                    let mass = verbose.compute_mass;
+                    if mass > 0 {
+                        total_fees += mass;
+                        fee_count += 1;
+                        min_fee = min_fee.min(mass);
+                        max_fee = max_fee.max(mass);
+                    }
+                }
+            }
+        }
+
+        if min_fee == u64::MAX {
+            min_fee = 0;
         }
 
         let unique_miners = miner_counts.len();
@@ -370,6 +361,10 @@ impl RpcManager {
             blocks_analyzed: sample_size,
             pools,
             node_versions,
+            total_fees,
+            min_fee,
+            max_fee,
+            fee_count,
         })
     }
 
@@ -394,6 +389,12 @@ impl RpcManager {
     pub async fn get_pruning_point_hash(&self) -> Result<RpcHash> {
         let dag = self.client.get_block_dag_info().await?;
         Ok(dag.pruning_point_hash)
+    }
+
+    /// Get the sink (tip) hash from block DAG info.
+    pub async fn get_sink_hash(&self) -> Result<RpcHash> {
+        let dag = self.client.get_block_dag_info().await?;
+        Ok(dag.sink)
     }
 
     /// Get the current DAA score from DAG info.
@@ -433,6 +434,8 @@ impl RpcManager {
             let mut receiver_counts: HashMap<String, usize> = HashMap::new();
             let mut protocol_counts: HashMap<crate::analytics::TransactionProtocol, usize> =
                 HashMap::new();
+            let mut protocol_fees: HashMap<crate::analytics::TransactionProtocol, u64> =
+                HashMap::new();
 
             for (i, tx) in chain_block.accepted_transactions.iter().enumerate() {
                 // Skip coinbase (first transaction)
@@ -442,7 +445,7 @@ impl RpcManager {
                 tx_count += 1;
 
                 // Extract fee from compute_mass (High verbosity)
-                if let Some(ref verbose) = tx.verbose_data
+                let tx_fee = if let Some(ref verbose) = tx.verbose_data
                     && let Some(mass) = verbose.compute_mass
                     && mass > 0
                 {
@@ -450,7 +453,10 @@ impl RpcManager {
                     fee_count += 1;
                     min_fee = min_fee.min(mass);
                     max_fee = max_fee.max(mass);
-                }
+                    mass
+                } else {
+                    0
+                };
 
                 // Extract sender addresses from input UTXO verbose data
                 for input in &tx.inputs {
@@ -459,8 +465,8 @@ impl RpcManager {
                         && let Some(ref uvd) = utxo.verbose_data
                         && let Some(ref addr) = uvd.script_public_key_address
                     {
-                        let short = shorten_address(&addr.to_string(), 10, 6);
-                        *sender_counts.entry(short).or_insert(0) += 1;
+                        let addr = addr.to_string();
+                        *sender_counts.entry(addr).or_insert(0) += 1;
                     }
                 }
 
@@ -469,8 +475,8 @@ impl RpcManager {
                     if let Some(ref vd) = output.verbose_data
                         && let Some(ref addr) = vd.script_public_key_address
                     {
-                        let short = shorten_address(&addr.to_string(), 10, 6);
-                        *receiver_counts.entry(short).or_insert(0) += 1;
+                        let addr = addr.to_string();
+                        *receiver_counts.entry(addr).or_insert(0) += 1;
                     }
                 }
 
@@ -483,6 +489,9 @@ impl RpcManager {
                     .collect();
                 if let Some(proto) = detect_protocol(payload, &input_scripts) {
                     *protocol_counts.entry(proto).or_insert(0) += 1;
+                    if tx_fee > 0 {
+                        *protocol_fees.entry(proto).or_insert(0) += tx_fee;
+                    }
                 }
             }
 
@@ -501,6 +510,7 @@ impl RpcManager {
                 sender_counts,
                 receiver_counts,
                 protocol_counts,
+                protocol_fees,
             });
         }
 

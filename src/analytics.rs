@@ -127,6 +127,7 @@ pub struct BlockSummary {
     pub sender_counts: HashMap<String, usize>,
     pub receiver_counts: HashMap<String, usize>,
     pub protocol_counts: HashMap<TransactionProtocol, usize>,
+    pub protocol_fees: HashMap<TransactionProtocol, u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,6 +141,7 @@ pub struct TimeBucket {
     pub sender_counts: HashMap<String, usize>,
     pub receiver_counts: HashMap<String, usize>,
     pub protocol_counts: HashMap<TransactionProtocol, usize>,
+    pub protocol_fees: HashMap<TransactionProtocol, u64>,
 }
 
 impl TimeBucket {
@@ -154,6 +156,7 @@ impl TimeBucket {
             sender_counts: HashMap::new(),
             receiver_counts: HashMap::new(),
             protocol_counts: HashMap::new(),
+            protocol_fees: HashMap::new(),
         }
     }
 
@@ -173,6 +176,9 @@ impl TimeBucket {
         }
         for (proto, count) in &block.protocol_counts {
             *self.protocol_counts.entry(*proto).or_insert(0) += count;
+        }
+        for (proto, fees) in &block.protocol_fees {
+            *self.protocol_fees.entry(*proto).or_insert(0) += fees;
         }
         // Amortized cap: only sort when 2x over limit
         if self.sender_counts.len() > MAX_ADDRESSES_PER_BUCKET * 2 {
@@ -339,7 +345,11 @@ impl AnalyticsEngine {
     pub fn get_view(&self, window: TimeWindow) -> AggregatedView {
         match window {
             TimeWindow::OneMin => self.aggregate_recent_blocks(),
+            TimeWindow::FifteenMin => self.aggregate_buckets_last_n(&self.minute_buckets, 15),
+            TimeWindow::ThirtyMin => self.aggregate_buckets_last_n(&self.minute_buckets, 30),
             TimeWindow::OneHour => self.aggregate_buckets(&self.minute_buckets),
+            TimeWindow::SixHour => self.aggregate_buckets_last_n(&self.ten_minute_buckets, 36),
+            TimeWindow::TwelveHour => self.aggregate_buckets_last_n(&self.ten_minute_buckets, 72),
             TimeWindow::TwentyFourHour => self.aggregate_buckets(&self.ten_minute_buckets),
         }
     }
@@ -354,6 +364,7 @@ impl AnalyticsEngine {
             sender_counts: &b.sender_counts,
             receiver_counts: &b.receiver_counts,
             protocol_counts: &b.protocol_counts,
+            protocol_fees: &b.protocol_fees,
             timestamp_ms: b.timestamp_ms as f64,
         });
         let mut view = build_aggregated_view(items);
@@ -363,6 +374,23 @@ impl AnalyticsEngine {
         view.tx_over_time
             .sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
         view
+    }
+
+    fn aggregate_buckets_last_n(&self, buckets: &VecDeque<TimeBucket>, n: usize) -> AggregatedView {
+        let skip = buckets.len().saturating_sub(n);
+        let items = buckets.iter().skip(skip).map(|b| AggregateItem {
+            tx_count: b.tx_count,
+            total_fees: b.total_fees,
+            fee_count: b.fee_count,
+            min_fee: b.min_fee,
+            max_fee: b.max_fee,
+            sender_counts: &b.sender_counts,
+            receiver_counts: &b.receiver_counts,
+            protocol_counts: &b.protocol_counts,
+            protocol_fees: &b.protocol_fees,
+            timestamp_ms: b.bucket_start_ms as f64,
+        });
+        build_aggregated_view(items)
     }
 
     fn aggregate_buckets(&self, buckets: &VecDeque<TimeBucket>) -> AggregatedView {
@@ -375,6 +403,7 @@ impl AnalyticsEngine {
             sender_counts: &b.sender_counts,
             receiver_counts: &b.receiver_counts,
             protocol_counts: &b.protocol_counts,
+            protocol_fees: &b.protocol_fees,
             timestamp_ms: b.bucket_start_ms as f64,
         });
         build_aggregated_view(items)
@@ -407,6 +436,7 @@ struct AggregateItem<'a> {
     sender_counts: &'a HashMap<String, usize>,
     receiver_counts: &'a HashMap<String, usize>,
     protocol_counts: &'a HashMap<TransactionProtocol, usize>,
+    protocol_fees: &'a HashMap<TransactionProtocol, u64>,
     timestamp_ms: f64,
 }
 
@@ -415,6 +445,7 @@ fn build_aggregated_view<'a>(items: impl Iterator<Item = AggregateItem<'a>>) -> 
     let mut sender_totals: HashMap<String, usize> = HashMap::new();
     let mut receiver_totals: HashMap<String, usize> = HashMap::new();
     let mut protocol_totals: HashMap<TransactionProtocol, usize> = HashMap::new();
+    let mut protocol_fee_totals: HashMap<TransactionProtocol, u64> = HashMap::new();
 
     for item in items {
         view.blocks_analyzed += 1;
@@ -433,6 +464,9 @@ fn build_aggregated_view<'a>(items: impl Iterator<Item = AggregateItem<'a>>) -> 
         }
         for (proto, count) in item.protocol_counts {
             *protocol_totals.entry(*proto).or_insert(0) += count;
+        }
+        for (proto, fees) in item.protocol_fees {
+            *protocol_fee_totals.entry(*proto).or_insert(0) += fees;
         }
 
         let avg = if item.fee_count > 0 {
@@ -454,6 +488,11 @@ fn build_aggregated_view<'a>(items: impl Iterator<Item = AggregateItem<'a>>) -> 
     view.top_receivers = top_n_sorted(receiver_totals, 20);
     view.protocol_counts = {
         let mut v: Vec<_> = protocol_totals.into_iter().collect();
+        v.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+        v
+    };
+    view.protocol_fees = {
+        let mut v: Vec<_> = protocol_fee_totals.into_iter().collect();
         v.sort_unstable_by(|a, b| b.1.cmp(&a.1));
         v
     };
@@ -482,6 +521,7 @@ pub struct AggregatedView {
     pub top_senders: Vec<(String, usize)>,
     pub top_receivers: Vec<(String, usize)>,
     pub protocol_counts: Vec<(TransactionProtocol, usize)>,
+    pub protocol_fees: Vec<(TransactionProtocol, u64)>,
     pub fee_over_time: Vec<(f64, f64)>,
     pub tx_over_time: Vec<(f64, f64)>,
 }
@@ -504,6 +544,7 @@ mod tests {
             sender_counts: HashMap::from([("sender1".to_string(), tx_count)]),
             receiver_counts: HashMap::from([("receiver1".to_string(), tx_count)]),
             protocol_counts: HashMap::new(),
+            protocol_fees: HashMap::new(),
         }
     }
 
@@ -523,6 +564,7 @@ mod tests {
             sender_counts: HashMap::new(),
             receiver_counts: HashMap::new(),
             protocol_counts: HashMap::from([(proto, 1)]),
+            protocol_fees: HashMap::from([(proto, 100)]),
         }
     }
 

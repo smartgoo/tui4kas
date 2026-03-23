@@ -33,6 +33,7 @@ pub fn render_help(frame: &mut Frame, area: Rect, app: &App) {
         (":", "Open command line"),
         ("p", "Pause/resume polling"),
         ("?", "Toggle this help"),
+        ("c / dbl-click", "Copy focused text"),
         ("q q", "Quit (press twice)"),
         ("Ctrl+C", "Quit immediately"),
         ("Esc", "Close overlay/popup"),
@@ -55,6 +56,7 @@ pub fn render_help(frame: &mut Frame, area: Rect, app: &App) {
                 ("h/l or Left/Right", "Switch panel"),
                 ("j/k or Up/Down", "Scroll list"),
                 ("g/G or Home/End", "Jump to first/last"),
+                ("o", "Open address in browser"),
             ],
         ),
         Tab::Mempool => (
@@ -63,6 +65,7 @@ pub fn render_help(frame: &mut Frame, area: Rect, app: &App) {
                 ("j/k or Up/Down", "Select transaction"),
                 ("g/G or Home/End", "Jump to first/last"),
                 ("Enter", "Show transaction detail"),
+                ("o", "Open transaction in browser"),
                 ("Esc", "Close detail popup"),
             ],
         ),
@@ -73,6 +76,7 @@ pub fn render_help(frame: &mut Frame, area: Rect, app: &App) {
                 ("j/k or Up/Down", "Select item"),
                 ("g/G or Home/End", "Jump to first/last"),
                 ("Enter", "Show block info"),
+                ("o", "Open block in browser"),
                 ("Esc", "Close block popup"),
             ],
         ),
@@ -96,21 +100,10 @@ pub fn render_help(frame: &mut Frame, area: Rect, app: &App) {
                 ("g/G or Home/End", "Jump to top/bottom"),
             ],
         ),
-        Tab::IntegratedNode => {
-            let state = &app.integrated_node;
-            if state.is_running() {
+        Tab::Settings => {
+            if app.settings.editing {
                 (
-                    "Embedded Node (Running)",
-                    vec![
-                        ("j/k", "Scroll logs"),
-                        ("J/K", "Scroll fast (10 lines)"),
-                        ("g/G or Home/End", "Jump to top/bottom"),
-                        ("Enter", "Stop daemon"),
-                    ],
-                )
-            } else if state.editing {
-                (
-                    "Embedded Node (Editing)",
+                    "Settings (Editing)",
                     vec![
                         ("Enter", "Save value"),
                         ("Esc", "Cancel editing"),
@@ -119,11 +112,11 @@ pub fn render_help(frame: &mut Frame, area: Rect, app: &App) {
                 )
             } else {
                 (
-                    "Embedded Node (Settings)",
+                    "Settings",
                     vec![
                         ("Up/Down", "Navigate fields"),
-                        ("Enter", "Edit/toggle/start"),
-                        ("Left/Right", "Cycle enum values"),
+                        ("Enter", "Edit/cycle value"),
+                        ("Left/Right", "Cycle network"),
                         ("r", "Reload config"),
                     ],
                 )

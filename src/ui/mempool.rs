@@ -8,10 +8,6 @@ use crate::app::App;
 use crate::rpc::types::sompi_to_kas;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
-    if super::common::render_syncing_guard(frame, area, app, "Mempool") {
-        return;
-    }
-
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(5), Constraint::Min(0)])
@@ -84,6 +80,10 @@ fn render_table(frame: &mut Frame, area: Rect, app: &App) {
         0
     };
 
+    // If the TX ID column (50% of area width) can fit the full hash, show it
+    let id_col_width = (area.width / 2) as usize;
+    let show_full_id = id_col_width >= 66;
+
     let rows: Vec<Row> = if let Some(ref mempool) = app.node.mempool_state {
         mempool
             .entries
@@ -91,7 +91,7 @@ fn render_table(frame: &mut Frame, area: Rect, app: &App) {
             .enumerate()
             .skip(scroll_offset)
             .map(|(i, entry)| {
-                let id = if entry.transaction_id.len() > 20 {
+                let id = if !show_full_id && entry.transaction_id.len() > 20 {
                     format!(
                         "{}...{}",
                         &entry.transaction_id[..10],

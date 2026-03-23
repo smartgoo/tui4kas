@@ -6,27 +6,6 @@ use ratatui::widgets::{Block, Borders, Paragraph, Tabs};
 
 use crate::app::{App, ConnectionStatus, Tab};
 
-/// Render a "Node is syncing..." placeholder for tabs that need a synced node.
-/// Returns `true` if the placeholder was rendered (caller should return early).
-pub fn render_syncing_guard(frame: &mut Frame, area: Rect, app: &App, title: &str) -> bool {
-    if !app.is_node_syncing() {
-        return false;
-    }
-    let block = Block::default().borders(Borders::ALL).title(Span::styled(
-        format!(" {} ", title),
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    ));
-    let msg = Paragraph::new(Line::from(Span::styled(
-        format!(" Node is syncing... {} data will be available once synced.", title),
-        Style::default().fg(Color::Yellow),
-    )))
-    .block(block);
-    frame.render_widget(msg, area);
-    true
-}
-
 pub fn render_header(frame: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -68,14 +47,24 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &App) {
         Color::DarkGray
     };
 
-    let status = Paragraph::new(Line::from(vec![
+    let mut spans = vec![
         Span::raw(" "),
         Span::styled("●", Style::default().fg(status_color)),
         Span::raw(" "),
         Span::styled(status_text, Style::default().fg(status_color)),
         Span::styled(&poll_text, Style::default().fg(poll_color)),
-    ]))
-    .block(Block::default().borders(Borders::ALL));
+    ];
+
+    if let Some(ref flash) = app.clipboard_flash {
+        spans.push(Span::raw(" | "));
+        spans.push(Span::styled(
+            flash.as_str(),
+            Style::default().fg(Color::Green),
+        ));
+    }
+
+    let status = Paragraph::new(Line::from(spans))
+        .block(Block::default().borders(Borders::ALL));
 
     frame.render_widget(status, chunks[1]);
 }

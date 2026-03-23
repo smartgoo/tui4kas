@@ -56,13 +56,6 @@ fn render_node_info(frame: &mut Frame, area: Rect, app: &App) {
             ]),
         ];
 
-        if app.is_daemon_active() {
-            lines.push(Line::from(vec![
-                Span::styled(" Mode:        ", Style::default().fg(Color::DarkGray)),
-                Span::styled("Embedded Node", Style::default().fg(Color::Green)),
-            ]));
-        }
-
         if let Some(ref url) = app.node.node_url {
             lines.push(Line::from(vec![
                 Span::styled(" URL:         ", Style::default().fg(Color::DarkGray)),
@@ -96,32 +89,6 @@ fn render_node_info(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_network_stats(frame: &mut Frame, area: Rect, app: &App) {
-    if app.is_node_syncing() {
-        let daa = app
-            .node.server_info
-            .as_ref()
-            .map(|s| format_number(s.virtual_daa_score))
-            .unwrap_or_default();
-        let lines = vec![
-            Line::from(Span::styled(
-                " Node is syncing...",
-                Style::default().fg(Color::Yellow),
-            )),
-            Line::from(vec![
-                Span::styled(" DAA Score:      ", Style::default().fg(Color::DarkGray)),
-                Span::raw(daa),
-            ]),
-        ];
-        let block = Block::default().borders(Borders::ALL).title(Span::styled(
-            " Network Stats ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
-        frame.render_widget(Paragraph::new(lines).block(block), area);
-        return;
-    }
-
     let mut lines = if let Some(ref dag) = app.node.dag_info {
         vec![
             Line::from(vec![
@@ -202,12 +169,7 @@ fn render_markets(frame: &mut Frame, area: Rect, app: &App) {
         vec![
             Line::from(vec![
                 Span::styled(" Price (USD):   ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    format!("${:.6}", market.price_usd),
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                ),
+                Span::raw(format!("${:.6}", market.price_usd)),
                 Span::raw("  "),
                 Span::styled(
                     format!("{}{:.2}%", change_prefix, market.price_change_24h_pct),
@@ -257,22 +219,6 @@ fn format_usd(value: f64) -> String {
 }
 
 fn render_mempool_summary(frame: &mut Frame, area: Rect, app: &App) {
-    if app.is_node_syncing() {
-        let block = Block::default().borders(Borders::ALL).title(Span::styled(
-            " Mempool & Fees ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
-        let msg = Paragraph::new(Line::from(Span::styled(
-            " Node is syncing...",
-            Style::default().fg(Color::Yellow),
-        )))
-        .block(block);
-        frame.render_widget(msg, area);
-        return;
-    }
-
     let mut lines = Vec::new();
 
     if let Some(ref mempool) = app.node.mempool_state {

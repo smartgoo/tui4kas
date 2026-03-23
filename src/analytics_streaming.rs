@@ -4,7 +4,7 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 use crate::app::App;
-use crate::daemon_lifecycle::PollingHandles;
+use crate::connection::PollingHandles;
 use crate::rpc::client::RpcManager;
 
 /// Start the analytics VSPC V2 streaming task.
@@ -39,6 +39,11 @@ pub fn start_analytics_streaming(
         }
 
         // Determine start hash
+        let analyze_from_pruning_point = {
+            let app_guard = app.read().await;
+            app_guard.settings.config.analyze_from_pruning_point
+        };
+
         let start_hash = {
             let eng = engine.read().await;
             if let Some(ref last) = eng.last_known_chain_block {
@@ -51,13 +56,23 @@ pub fn start_analytics_streaming(
         let start_hash = match start_hash {
             Some(h) => h,
             None => {
-                // Get pruning point hash to start from scratch
-                match rpc.get_pruning_point_hash().await {
+                // Get start hash based on setting
+                let get_start = if analyze_from_pruning_point {
+                    rpc.get_pruning_point_hash().await
+                } else {
+                    rpc.get_sink_hash().await
+                };
+                match get_start {
                     Ok(h) => h,
                     Err(_) => {
                         // Retry after delay
                         tokio::time::sleep(Duration::from_secs(5)).await;
-                        match rpc.get_pruning_point_hash().await {
+                        let retry = if analyze_from_pruning_point {
+                            rpc.get_pruning_point_hash().await
+                        } else {
+                            rpc.get_sink_hash().await
+                        };
+                        match retry {
                             Ok(h) => h,
                             Err(_) => return,
                         }
@@ -72,6 +87,7 @@ pub fn start_analytics_streaming(
         // Initial sync + incremental polling loop
         let mut current_hash = start_hash;
         let mut synced = false;
+        let mut start_daa: Option<u64> = None;
 
         loop {
             // Check if paused or should quit
@@ -151,13 +167,23 @@ pub fn start_analytics_streaming(
                         eng.finalize_old_blocks(now_ms);
                         eng.prune_buckets(now_ms);
 
+                        // Track start DAA from first batch
+                        if start_daa.is_none() && last_daa > 0 {
+                            start_daa = Some(last_daa);
+                        }
+
                         // Detect sync completion
                         if !synced && block_count == 0 {
                             synced = true;
                         }
 
                         let sync_progress = if !synced {
-                            Some((last_daa, tip_daa))
+                            Some(crate::app::AnalyticsSyncProgress {
+                                start_daa: start_daa.unwrap_or(last_daa),
+                                last_daa,
+                                tip_daa,
+                                from_pruning_point: analyze_from_pruning_point,
+                            })
                         } else {
                             None
                         };
@@ -168,6 +194,7 @@ pub fn start_analytics_streaming(
                             eng.get_view(time_windows[2]),
                             eng.get_view(time_windows[3]),
                             eng.get_view(time_windows[4]),
+                            eng.get_view(time_windows[5]),
                         ];
 
                         (reorg_msg, sync_progress, cached_views)

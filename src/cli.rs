@@ -2,62 +2,14 @@ use clap::Parser;
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "tui4kas", version, about = "Terminal UI for Kaspa L1")]
-pub struct CliArgs {
-    /// wRPC endpoint URL (e.g., ws://127.0.0.1:17110).
-    /// If omitted, connects via Kaspa Public Node Network Resolver.
-    #[arg(short, long)]
-    pub url: Option<String>,
-
-    /// Network: mainnet, testnet-10, testnet-11
-    #[arg(short, long, default_value = "mainnet")]
-    pub network: String,
-
-    /// Auto-refresh interval in milliseconds
-    #[arg(short = 'r', long, default_value = "1000")]
-    pub refresh_interval_ms: u64,
-}
+pub struct CliArgs {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn cli_defaults() {
-        let args = CliArgs::parse_from(["tui4kas"]);
-        assert_eq!(args.url, None);
-        assert_eq!(args.network, "mainnet");
-        assert_eq!(args.refresh_interval_ms, 1000);
-    }
-
-    #[test]
-    fn cli_custom_values() {
-        let args = CliArgs::parse_from([
-            "tui4kas",
-            "--url",
-            "ws://127.0.0.1:17110",
-            "--network",
-            "testnet-10",
-            "--refresh-interval-ms",
-            "500",
-        ]);
-        assert_eq!(args.url, Some("ws://127.0.0.1:17110".to_string()));
-        assert_eq!(args.network, "testnet-10");
-        assert_eq!(args.refresh_interval_ms, 500);
-    }
-
-    #[test]
-    fn cli_short_flags() {
-        let args = CliArgs::parse_from([
-            "tui4kas",
-            "-u",
-            "ws://localhost:17110",
-            "-n",
-            "testnet-11",
-            "-r",
-            "2000",
-        ]);
-        assert_eq!(args.url, Some("ws://localhost:17110".to_string()));
-        assert_eq!(args.network, "testnet-11");
-        assert_eq!(args.refresh_interval_ms, 2000);
+    fn cli_no_args() {
+        let _args = CliArgs::parse_from(["tui4kas"]);
     }
 }

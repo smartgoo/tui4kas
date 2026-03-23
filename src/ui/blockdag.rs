@@ -2,114 +2,28 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::app::{App, DagFocus};
 use crate::rpc::types::format_number;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
-    if super::common::render_syncing_guard(frame, area, app, "BlockDAG") {
-        return;
-    }
-
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6),  // visualizer
             Constraint::Length(19), // metrics + GHOSTDAG stats
             Constraint::Min(0),     // tips/parents
         ])
         .split(area);
 
-    render_visualizer(frame, chunks[0], app);
-    render_metrics(frame, chunks[1], app);
-    render_tips(frame, chunks[2], app);
+    render_metrics(frame, chunks[0], app);
+    render_tips(frame, chunks[1], app);
 
     if app.dag_selection.block_loading {
         render_loading_popup(frame, area);
     } else if let Some(ref detail) = app.dag_selection.block_detail {
         render_block_popup(frame, area, detail);
     }
-}
-
-fn render_visualizer(frame: &mut Frame, area: Rect, app: &App) {
-    let vis = &app.node.dag_visualizer;
-    let inner_width = area.width.saturating_sub(2) as usize;
-    let inner_height = area.height.saturating_sub(2) as usize;
-
-    let mut lines: Vec<Line> = Vec::new();
-
-    if vis.columns.is_empty() {
-        lines.push(Line::from(Span::styled(
-            " Collecting DAG data...",
-            Style::default().fg(Color::DarkGray),
-        )));
-    } else {
-        // Each column takes 4 chars: block + spacing (e.g. "██ ─")
-        let col_width = 4;
-        let max_cols = inner_width / col_width;
-        let skip = vis.columns.len().saturating_sub(max_cols);
-        let visible_cols: Vec<&crate::app::DagVisualizerColumn> =
-            vis.columns.iter().skip(skip).collect();
-
-        let max_blocks = visible_cols
-            .iter()
-            .map(|c| c.blocks.len())
-            .max()
-            .unwrap_or(0);
-        let display_rows = max_blocks.min(inner_height.saturating_sub(1));
-
-        // Draw blocks as small filled/outlined squares
-        for row in 0..display_rows {
-            let mut spans: Vec<Span> = Vec::new();
-            spans.push(Span::raw(" "));
-            for (ci, col) in visible_cols.iter().enumerate() {
-                if row < col.blocks.len() {
-                    let block = &col.blocks[row];
-                    let (symbol, style) = if block.is_selected_parent {
-                        (
-                            "██",
-                            Style::default()
-                                .fg(Color::Cyan)
-                                .add_modifier(Modifier::BOLD),
-                        )
-                    } else {
-                        ("▒▒", Style::default().fg(Color::White))
-                    };
-                    spans.push(Span::styled(symbol, style));
-                } else {
-                    spans.push(Span::raw("  "));
-                }
-                // Connection between columns
-                if ci < visible_cols.len() - 1 {
-                    spans.push(Span::styled("──", Style::default().fg(Color::DarkGray)));
-                }
-            }
-            lines.push(Line::from(spans));
-        }
-
-        // Flow arrow line at the bottom
-        if display_rows > 0 && visible_cols.len() > 1 {
-            let mut conn_spans: Vec<Span> = Vec::new();
-            conn_spans.push(Span::raw(" "));
-            for ci in 0..visible_cols.len() {
-                conn_spans.push(Span::styled("  ", Style::default().fg(Color::DarkGray)));
-                if ci < visible_cols.len() - 1 {
-                    conn_spans.push(Span::styled("─→", Style::default().fg(Color::DarkGray)));
-                }
-            }
-            lines.push(Line::from(conn_spans));
-        }
-    }
-
-    let block = Block::default().borders(Borders::ALL).title(Span::styled(
-        " DAG Visualizer (██ = selected parent) ",
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    ));
-
-    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn render_metrics(frame: &mut Frame, area: Rect, app: &App) {
@@ -143,11 +57,11 @@ fn render_metrics(frame: &mut Frame, area: Rect, app: &App) {
             ]),
             Line::from(vec![
                 Span::styled(" Pruning Point:    ", label),
-                Span::raw(truncate_hash(&dag.pruning_point_hash)),
+                Span::raw(&dag.pruning_point_hash),
             ]),
             Line::from(vec![
                 Span::styled(" Sink:             ", label),
-                Span::raw(truncate_hash(&dag.sink)),
+                Span::raw(&dag.sink),
             ]),
             Line::from(vec![
                 Span::styled(" Tips Count:       ", label),
@@ -236,79 +150,82 @@ fn render_tips(frame: &mut Frame, area: Rect, app: &App) {
     let tips_focused = app.dag_selection.focus == DagFocus::Tips;
     let parents_focused = app.dag_selection.focus == DagFocus::Parents;
 
-    // Tip hashes
-    let tip_items: Vec<ListItem> = if let Some(ref dag) = app.node.dag_info {
-        dag.tip_hashes
-            .iter()
-            .enumerate()
-            .map(|(i, h)| {
-                let style = if tips_focused && i == app.dag_selection.tip_selected {
-                    Style::default().bg(Color::DarkGray).fg(Color::White)
-                } else {
-                    Style::default().fg(Color::White)
-                };
-                ListItem::new(Line::from(Span::styled(h.as_str(), style)))
-            })
-            .collect()
-    } else {
-        vec![]
-    };
+    render_hash_list(
+        frame,
+        chunks[0],
+        " Tip Hashes (←→ switch, ↑↓ select, Enter info, o open) ",
+        app.node.dag_info.as_ref().map(|d| d.tip_hashes.as_slice()),
+        tips_focused,
+        app.dag_selection.tip_selected,
+    );
 
-    let tips_border = if tips_focused {
+    render_hash_list(
+        frame,
+        chunks[1],
+        " Virtual Parent Hashes ",
+        app.node
+            .dag_info
+            .as_ref()
+            .map(|d| d.virtual_parent_hashes.as_slice()),
+        parents_focused,
+        app.dag_selection.parent_selected,
+    );
+}
+
+fn render_hash_list(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    hashes: Option<&[String]>,
+    is_focused: bool,
+    selected: usize,
+) {
+    let border_color = if is_focused {
         Color::Cyan
     } else {
         Color::White
     };
-    let tips_list = List::new(tip_items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(tips_border))
-            .title(Span::styled(
-                " Tip Hashes (←→ switch, ↑↓ select, Enter info) ",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )),
-    );
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
 
-    frame.render_widget(tips_list, chunks[0]);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
-    // Virtual parent hashes
-    let parent_items: Vec<ListItem> = if let Some(ref dag) = app.node.dag_info {
-        dag.virtual_parent_hashes
-            .iter()
-            .enumerate()
-            .map(|(i, h)| {
-                let style = if parents_focused && i == app.dag_selection.parent_selected {
-                    Style::default().bg(Color::DarkGray).fg(Color::White)
-                } else {
-                    Style::default().fg(Color::White)
-                };
-                ListItem::new(Line::from(Span::styled(h.as_str(), style)))
-            })
-            .collect()
-    } else {
-        vec![]
+    let hashes = match hashes {
+        Some(h) => h,
+        None => return,
     };
 
-    let parents_border = if parents_focused {
-        Color::Cyan
+    let visible_rows = inner.height as usize;
+    let scroll = if selected >= visible_rows {
+        selected - visible_rows + 1
     } else {
-        Color::White
+        0
     };
-    let parents_list = List::new(parent_items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(parents_border))
-            .title(Span::styled(
-                " Virtual Parent Hashes ",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )),
-    );
 
-    frame.render_widget(parents_list, chunks[1]);
+    let lines: Vec<Line> = hashes
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(visible_rows)
+        .map(|(i, h)| {
+            let style = if is_focused && i == selected {
+                Style::default().bg(Color::DarkGray).fg(Color::White)
+            } else {
+                Style::default()
+            };
+            Line::from(Span::styled(h.as_str(), style))
+        })
+        .collect();
+
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 fn render_loading_popup(frame: &mut Frame, area: Rect) {
@@ -354,53 +271,3 @@ fn render_block_popup(frame: &mut Frame, area: Rect, detail: &str) {
     frame.render_widget(popup, popup_area);
 }
 
-fn truncate_hash(hash: &str) -> String {
-    let char_count = hash.chars().count();
-    if char_count > 24 {
-        let prefix: String = hash.chars().take(12).collect();
-        let suffix: String = hash.chars().skip(char_count - 12).collect();
-        format!("{}...{}", prefix, suffix)
-    } else {
-        hash.to_string()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn truncate_hash_short() {
-        assert_eq!(truncate_hash("abcdef"), "abcdef");
-    }
-
-    #[test]
-    fn truncate_hash_exactly_24() {
-        let hash = "a".repeat(24);
-        assert_eq!(truncate_hash(&hash), hash);
-    }
-
-    #[test]
-    fn truncate_hash_long() {
-        let hash = "abcdefghijklmnopqrstuvwxyz0123456789";
-        let result = truncate_hash(hash);
-        // first 12 + "..." + last 12
-        assert_eq!(result, "abcdefghijkl...yz0123456789");
-        assert_eq!(result.len(), 27);
-    }
-
-    #[test]
-    fn truncate_hash_empty() {
-        assert_eq!(truncate_hash(""), "");
-    }
-
-    #[test]
-    fn truncate_hash_realistic() {
-        let hash = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
-        let result = truncate_hash(hash);
-        assert_eq!(result.len(), 27); // 12 + 3 + 12
-        assert!(result.starts_with("abcdef123456"));
-        assert!(result.ends_with("ef1234567890"));
-        assert!(result.contains("..."));
-    }
-}

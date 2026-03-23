@@ -1,56 +1,79 @@
+use std::io::Write;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
+use base64::Engine;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use tokio::sync::RwLock;
 
-use crate::app::{App, CommandLine, DagFocus, DaemonStatus, IntegratedNodeState, Tab};
-use crate::config::DaemonConfig;
+use crate::app::{App, CommandLine, DagFocus, MiningPanel, SettingsState, Tab};
+use crate::config::AppConfig;
 use crate::rpc::client::RpcManager;
 use crate::rpc::types::sompi_to_kas;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConfigField {
-    // General (0-6)
-    Network,
-    UtxoIndex,
-    Archival,
-    RamScale,
-    LogLevel,
-    AsyncThreads,
-    AutoStart,
-    // Networking (7-14)
-    Listen,
-    ExternalIp,
-    OutboundTarget,
-    InboundLimit,
-    ConnectPeers,
-    AddPeers,
-    DisableUpnp,
-    DisableDnsSeed,
-    // Storage (15-21)
-    AppDir,
-    RocksdbPreset,
-    RocksdbWalDir,
-    RocksdbCacheSize,
-    RetentionDays,
-    ResetDb,
-    RpcMaxClients,
-    // Performance (22)
-    PerfMetrics,
-    // Action (23)
-    StartDaemon,
+/// Base URL for the Kaspa block explorer.
+const EXPLORER_BASE: &str = "https://kaspa.stream";
+
+/// Double-click detection threshold.
+const DOUBLE_CLICK_MS: u64 = 400;
+
+/// Copy text to terminal clipboard via OSC 52 escape sequence.
+fn copy_to_clipboard(text: &str) {
+    let encoded = base64::engine::general_purpose::STANDARD.encode(text);
+    let _ = write!(std::io::stdout(), "\x1b]52;c;{}\x07", encoded);
+    let _ = std::io::stdout().flush();
 }
 
-impl ConfigField {
-    pub const COUNT: usize = 24;
+/// Get the text of the currently focused/selected element for clipboard copy.
+fn get_focused_text(app: &App) -> Option<String> {
+    match app.active_tab {
+        Tab::Mempool => {
+            let mempool = app.node.mempool_state.as_ref()?;
+            let entry = mempool.entries.get(app.mempool_selected)?;
+            Some(entry.transaction_id.clone())
+        }
+        Tab::BlockDag => get_selected_dag_hash(app),
+        Tab::Mining => {
+            let mining = app.node.mining_info.as_ref()?;
+            let (data, selected) = match app.mining_tab.active_panel {
+                MiningPanel::Miners => (&mining.all_miners, app.mining_tab.miners_selected),
+                MiningPanel::Pools => (&mining.pools, app.mining_tab.pools_selected),
+                MiningPanel::Versions => (&mining.node_versions, app.mining_tab.versions_selected),
+            };
+            data.get(selected).map(|(name, _)| name.clone())
+        }
+        Tab::RpcExplorer => {
+            app.rpc_explorer
+                .available_methods
+                .get(app.rpc_explorer.selected_method)
+                .map(|m| m.to_string())
+        }
+        _ => None,
+    }
+}
+
+/// Commands sent from key handlers to the main loop for settings/reconnection.
+pub enum SettingsCommand {
+    Reconnect(AppConfig),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsField {
+    Url,
+    Network,
+    RefreshInterval,
+    AnalysisStart,
+}
+
+impl SettingsField {
+    pub const COUNT: usize = 4;
 
     pub fn from_index(i: usize) -> Option<Self> {
-        use ConfigField::*;
         [
-            Network, UtxoIndex, Archival, RamScale, LogLevel, AsyncThreads, AutoStart,
-            Listen, ExternalIp, OutboundTarget, InboundLimit, ConnectPeers, AddPeers,
-            DisableUpnp, DisableDnsSeed, AppDir, RocksdbPreset, RocksdbWalDir,
-            RocksdbCacheSize, RetentionDays, ResetDb, RpcMaxClients, PerfMetrics, StartDaemon,
+            SettingsField::Url,
+            SettingsField::Network,
+            SettingsField::RefreshInterval,
+            SettingsField::AnalysisStart,
         ]
         .get(i)
         .copied()
@@ -87,7 +110,7 @@ pub fn handle_normal_keys(
     key: KeyEvent,
     rpc: &Arc<RpcManager>,
     app_state: &Arc<RwLock<App>>,
-    daemon_tx: &tokio::sync::mpsc::Sender<DaemonCommand>,
+    settings_tx: &tokio::sync::mpsc::Sender<SettingsCommand>,
 ) -> bool {
     // Reset quit confirmation on any key that isn't 'q'
     if key.code != KeyCode::Char('q') {
@@ -128,16 +151,37 @@ pub fn handle_normal_keys(
         return true;
     }
 
+    // When editing a settings field, route all input there first
+    if app.active_tab == Tab::Settings && app.settings.editing {
+        handle_settings_keys(app, key.code, settings_tx);
+        return false;
+    }
+
     // Normal mode
     match (key.code, key.modifiers) {
         (KeyCode::Char('c'), KeyModifiers::CONTROL) => { app.should_quit = true; }
         (KeyCode::Char('q'), _) => {
             if app.quit_confirm { app.should_quit = true; } else { app.quit_confirm = true; }
         }
-        (KeyCode::Esc, _) => { app.command_line.show_output = false; }
+        (KeyCode::Esc, _) => {
+            app.command_line.show_output = false;
+            // Dispatch Esc to tab-specific handlers for popup closing
+            match app.active_tab {
+                Tab::Mempool => handle_mempool_keys(app, key.code),
+                Tab::BlockDag => handle_blockdag_keys(app, key.code, rpc, app_state),
+                Tab::Analytics => handle_analytics_keys(app, key.code),
+                _ => {}
+            }
+        }
         (KeyCode::Char('?'), _) => { app.show_help = true; }
         (KeyCode::Char(':'), _) => { app.command_line.activate(); }
         (KeyCode::Char('p'), _) => { app.paused = !app.paused; }
+        (KeyCode::Char('c'), _) => {
+            if let Some(text) = get_focused_text(app) {
+                copy_to_clipboard(&text);
+                app.clipboard_flash = Some(format!("Copied: {}", text));
+            }
+        }
         (KeyCode::Tab, _) => { app.next_tab(); }
         (KeyCode::BackTab, _) => { app.prev_tab(); }
         (KeyCode::Char('1'), _) => { app.active_tab = Tab::Dashboard; }
@@ -146,14 +190,14 @@ pub fn handle_normal_keys(
         (KeyCode::Char('4'), _) => { app.active_tab = Tab::BlockDag; }
         (KeyCode::Char('5'), _) => { app.active_tab = Tab::Analytics; }
         (KeyCode::Char('6'), _) => { app.active_tab = Tab::RpcExplorer; }
-        (KeyCode::Char('7'), _) => { app.active_tab = Tab::IntegratedNode; }
+        (KeyCode::Char('7'), _) => { app.active_tab = Tab::Settings; }
         _ => match app.active_tab {
             Tab::Mining => handle_mining_keys(app, key.code),
             Tab::RpcExplorer => handle_rpc_explorer_keys(app, key.code, rpc, app_state),
             Tab::Mempool => handle_mempool_keys(app, key.code),
             Tab::BlockDag => handle_blockdag_keys(app, key.code, rpc, app_state),
             Tab::Analytics => handle_analytics_keys(app, key.code),
-            Tab::IntegratedNode => handle_integrated_node_keys(app, key.code, daemon_tx),
+            Tab::Settings => handle_settings_keys(app, key.code, settings_tx),
             _ => {}
         },
     }
@@ -196,16 +240,12 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
                 }
             }
             Tab::Mining => {
-                let scroll = app.mining_tab.scroll_mut();
-                *scroll = scroll.saturating_add(3);
+                let max = mining_panel_len(app).saturating_sub(1);
+                let sel = app.mining_tab.selected_mut();
+                *sel = (*sel + 3).min(max);
             }
             Tab::RpcExplorer => {
                 app.rpc_explorer.scroll_offset = app.rpc_explorer.scroll_offset.saturating_add(3);
-            }
-            Tab::IntegratedNode if app.integrated_node.is_running() => {
-                let max = app.integrated_node.log_lines.len();
-                app.integrated_node.log_scroll = app.integrated_node.log_scroll.saturating_add(3).min(max);
-                app.integrated_node.log_auto_scroll = app.integrated_node.log_scroll >= max;
             }
             _ => {}
         },
@@ -224,20 +264,28 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
                 }
             }
             Tab::Mining => {
-                let scroll = app.mining_tab.scroll_mut();
-                *scroll = scroll.saturating_sub(3);
+                let sel = app.mining_tab.selected_mut();
+                *sel = sel.saturating_sub(3);
             }
             Tab::RpcExplorer => {
                 app.rpc_explorer.scroll_offset = app.rpc_explorer.scroll_offset.saturating_sub(3);
             }
-            Tab::IntegratedNode if app.integrated_node.is_running() => {
-                app.integrated_node.log_scroll = app.integrated_node.log_scroll.saturating_sub(3);
-                app.integrated_node.log_auto_scroll = false;
-            }
             _ => {}
         },
         MouseEventKind::Down(MouseButton::Left) => {
-            if mouse.row < 3 {
+            let now = Instant::now();
+            let is_double_click = app
+                .last_click
+                .is_some_and(|prev| now.duration_since(prev) < Duration::from_millis(DOUBLE_CLICK_MS));
+            app.last_click = Some(now);
+
+            if is_double_click {
+                // Double-click: copy focused text to clipboard
+                if let Some(text) = get_focused_text(app) {
+                    copy_to_clipboard(&text);
+                    app.clipboard_flash = Some(format!("Copied: {}", text));
+                }
+            } else if mouse.row < 3 {
                 let tabs = Tab::all();
                 let mut x_pos: u16 = 2;
                 for tab in tabs {
@@ -256,12 +304,6 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     false
 }
 
-/// Commands sent from key handlers to the main loop for daemon lifecycle management.
-pub enum DaemonCommand {
-    Start(Box<DaemonConfig>),
-    Stop,
-}
-
 pub fn handle_mining_keys(app: &mut App, key: KeyCode) {
     match key {
         KeyCode::Left | KeyCode::Char('h') => {
@@ -271,21 +313,47 @@ pub fn handle_mining_keys(app: &mut App, key: KeyCode) {
             app.mining_tab.active_panel = app.mining_tab.active_panel.next();
         }
         KeyCode::Up | KeyCode::Char('k') => {
-            let scroll = app.mining_tab.scroll_mut();
+            let scroll = app.mining_tab.selected_mut();
             *scroll = scroll.saturating_sub(1);
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            let scroll = app.mining_tab.scroll_mut();
-            *scroll = scroll.saturating_add(1);
+            let max = mining_panel_len(app).saturating_sub(1);
+            let sel = app.mining_tab.selected_mut();
+            if *sel < max {
+                *sel += 1;
+            }
         }
         KeyCode::Home | KeyCode::Char('g') => {
-            *app.mining_tab.scroll_mut() = 0;
+            *app.mining_tab.selected_mut() = 0;
         }
         KeyCode::End | KeyCode::Char('G') => {
-            *app.mining_tab.scroll_mut() = usize::MAX;
+            *app.mining_tab.selected_mut() = mining_panel_len(app).saturating_sub(1);
+        }
+        KeyCode::Char('o') => {
+            if let Some(ref mining) = app.node.mining_info {
+                let (data, selected) = match app.mining_tab.active_panel {
+                    MiningPanel::Miners => (&mining.all_miners, app.mining_tab.miners_selected),
+                    MiningPanel::Pools => (&mining.pools, app.mining_tab.pools_selected),
+                    MiningPanel::Versions => (&mining.node_versions, app.mining_tab.versions_selected),
+                };
+                if let Some((name, _)) = data.get(selected) {
+                    // Only open addresses (kaspa:...) in explorer
+                    if name.starts_with("kaspa:") {
+                        let _ = open::that(format!("{}/address/{}", EXPLORER_BASE, name));
+                    }
+                }
+            }
         }
         _ => {}
     }
+}
+
+fn mining_panel_len(app: &App) -> usize {
+    app.node.mining_info.as_ref().map(|m| match app.mining_tab.active_panel {
+        MiningPanel::Miners => m.all_miners.len(),
+        MiningPanel::Pools => m.pools.len(),
+        MiningPanel::Versions => m.node_versions.len(),
+    }).unwrap_or(0)
 }
 
 pub fn handle_rpc_explorer_keys(
@@ -383,6 +451,14 @@ pub fn handle_mempool_keys(app: &mut App, key: KeyCode) {
                 app.mempool_selected = entry_count - 1;
             }
         }
+        KeyCode::Char('o') => {
+            if let Some(ref mempool) = app.node.mempool_state
+                && app.mempool_selected < mempool.entries.len()
+            {
+                let txid = &mempool.entries[app.mempool_selected].transaction_id;
+                let _ = open::that(format!("{}/tx/{}", EXPLORER_BASE, txid));
+            }
+        }
         KeyCode::Enter => {
             if let Some(ref mempool) = app.node.mempool_state
                 && app.mempool_selected < mempool.entries.len()
@@ -469,18 +545,13 @@ pub fn handle_blockdag_keys(
                 }
             }
         }
+        KeyCode::Char('o') => {
+            if let Some(hash) = get_selected_dag_hash(app) {
+                let _ = open::that(format!("{}/block/{}", EXPLORER_BASE, hash));
+            }
+        }
         KeyCode::Enter => {
-            let hash = if let Some(ref dag) = app.node.dag_info {
-                match app.dag_selection.focus {
-                    DagFocus::Tips => dag.tip_hashes.get(app.dag_selection.tip_selected).cloned(),
-                    DagFocus::Parents => dag
-                        .virtual_parent_hashes
-                        .get(app.dag_selection.parent_selected)
-                        .cloned(),
-                }
-            } else {
-                None
-            };
+            let hash = get_selected_dag_hash(app);
 
             if let Some(hash) = hash {
                 app.dag_selection.block_loading = true;
@@ -501,6 +572,17 @@ pub fn handle_blockdag_keys(
     }
 }
 
+fn get_selected_dag_hash(app: &App) -> Option<String> {
+    let dag = app.node.dag_info.as_ref()?;
+    match app.dag_selection.focus {
+        DagFocus::Tips => dag.tip_hashes.get(app.dag_selection.tip_selected).cloned(),
+        DagFocus::Parents => dag
+            .virtual_parent_hashes
+            .get(app.dag_selection.parent_selected)
+            .cloned(),
+    }
+}
+
 pub fn handle_analytics_keys(app: &mut App, key: KeyCode) {
     // Dismiss reorg notification on Esc
     if app.analytics.reorg_notification.is_some() && key == KeyCode::Esc {
@@ -509,33 +591,39 @@ pub fn handle_analytics_keys(app: &mut App, key: KeyCode) {
     }
 
     match key {
-        // Panel navigation (2x2 + 1 full-width bottom)
-        // Grid:  0  1
-        //        2  3
-        //        4  4
+        // Panel navigation
+        // Grid:  0  1  2
+        //        3     4
+        //        5  5  5
         KeyCode::Left | KeyCode::Char('h') => {
-            if app.analytics.focus % 2 == 1 && app.analytics.focus < 4 {
-                app.analytics.focus -= 1;
+            match app.analytics.focus {
+                1 => app.analytics.focus = 0,
+                2 => app.analytics.focus = 1,
+                4 => app.analytics.focus = 3,
+                _ => {}
             }
         }
         KeyCode::Right | KeyCode::Char('l') => {
-            if app.analytics.focus.is_multiple_of(2) && app.analytics.focus < 4 {
-                app.analytics.focus += 1;
+            match app.analytics.focus {
+                0 => app.analytics.focus = 1,
+                1 => app.analytics.focus = 2,
+                3 => app.analytics.focus = 4,
+                _ => {}
             }
         }
         KeyCode::Up | KeyCode::Char('k') => {
             match app.analytics.focus {
-                2 => app.analytics.focus = 0,
-                3 => app.analytics.focus = 1,
+                3 => app.analytics.focus = 0,
                 4 => app.analytics.focus = 2,
+                5 => app.analytics.focus = 3,
                 _ => {}
             }
         }
         KeyCode::Down | KeyCode::Char('j') => {
             match app.analytics.focus {
-                0 => app.analytics.focus = 2,
-                1 => app.analytics.focus = 3,
-                2 | 3 => app.analytics.focus = 4,
+                0 | 1 => app.analytics.focus = 3,
+                2 => app.analytics.focus = 4,
+                3 | 4 => app.analytics.focus = 5,
                 _ => {}
             }
         }
@@ -561,53 +649,14 @@ pub fn handle_analytics_keys(app: &mut App, key: KeyCode) {
     }
 }
 
-pub fn handle_integrated_node_keys(
+pub fn handle_settings_keys(
     app: &mut App,
     key: KeyCode,
-    daemon_tx: &tokio::sync::mpsc::Sender<DaemonCommand>,
+    settings_tx: &tokio::sync::mpsc::Sender<SettingsCommand>,
 ) {
-    let state = &mut app.integrated_node;
+    let state = &mut app.settings;
 
-    if state.is_running() {
-        // Running mode
-        match key {
-            KeyCode::Enter => {
-                if matches!(state.status, DaemonStatus::Running)
-                    && daemon_tx.try_send(DaemonCommand::Stop).is_ok()
-                {
-                    state.status = DaemonStatus::Stopping;
-                }
-            }
-            KeyCode::Char('j') => {
-                let max = state.log_lines.len();
-                state.log_scroll = state.log_scroll.saturating_add(1).min(max);
-                state.log_auto_scroll = state.log_scroll >= max;
-            }
-            KeyCode::Char('k') => {
-                state.log_scroll = state.log_scroll.saturating_sub(1);
-                state.log_auto_scroll = false;
-            }
-            KeyCode::Char('J') => {
-                let max = state.log_lines.len();
-                state.log_scroll = state.log_scroll.saturating_add(10).min(max);
-                state.log_auto_scroll = state.log_scroll >= max;
-            }
-            KeyCode::Char('K') => {
-                state.log_scroll = state.log_scroll.saturating_sub(10);
-                state.log_auto_scroll = false;
-            }
-            KeyCode::Home | KeyCode::Char('g') => {
-                state.log_scroll = 0;
-                state.log_auto_scroll = false;
-            }
-            KeyCode::End | KeyCode::Char('G') => {
-                state.log_scroll = state.log_lines.len();
-                state.log_auto_scroll = true;
-            }
-            _ => {}
-        }
-    } else if state.editing {
-        // Field editing mode
+    if state.editing {
         match key {
             KeyCode::Esc => {
                 state.editing = false;
@@ -617,9 +666,9 @@ pub fn handle_integrated_node_keys(
                 let val = state.edit_buffer.clone();
                 state.editing = false;
                 state.edit_buffer.clear();
-                if let Some(field) = ConfigField::from_index(state.selected_field) {
-                    apply_field_edit(&mut state.config, field, &val);
-                    auto_save_config(state);
+                if let Some(field) = SettingsField::from_index(state.selected_field) {
+                    apply_field_edit(state, field, &val);
+                    auto_save_and_reconnect(state, settings_tx);
                 }
             }
             KeyCode::Backspace => {
@@ -631,54 +680,29 @@ pub fn handle_integrated_node_keys(
             _ => {}
         }
     } else {
-        // Settings navigation mode
-        state.status_message = None; // Clear transient messages on any navigation
+        state.status_message = None;
         match key {
             KeyCode::Up => {
                 state.selected_field = state.selected_field.saturating_sub(1);
             }
             KeyCode::Down => {
-                let max = ConfigField::COUNT - 1;
+                let max = SettingsField::COUNT - 1;
                 if state.selected_field < max {
                     state.selected_field += 1;
                 }
             }
             KeyCode::Enter => {
-                if let Some(field) = ConfigField::from_index(state.selected_field) {
-                    use ConfigField::*;
+                if let Some(field) = SettingsField::from_index(state.selected_field) {
                     match field {
-                        // Cycle enum fields
-                        Network => { state.config.cycle_network(); auto_save_config(state); }
-                        LogLevel => { state.config.cycle_log_level(); auto_save_config(state); }
-                        RocksdbPreset => { state.config.cycle_rocksdb_preset(); auto_save_config(state); }
-                        // Toggle bool fields
-                        UtxoIndex => { state.config.utxo_index = !state.config.utxo_index; auto_save_config(state); }
-                        Archival => { state.config.archival = !state.config.archival; auto_save_config(state); }
-                        AutoStart => { state.config.auto_start_daemon = !state.config.auto_start_daemon; auto_save_config(state); }
-                        DisableUpnp => { state.config.disable_upnp = !state.config.disable_upnp; auto_save_config(state); }
-                        DisableDnsSeed => { state.config.disable_dns_seed = !state.config.disable_dns_seed; auto_save_config(state); }
-                        ResetDb => { state.config.reset_db = !state.config.reset_db; auto_save_config(state); }
-                        PerfMetrics => { state.config.perf_metrics = !state.config.perf_metrics; auto_save_config(state); }
-                        // Start daemon action
-                        StartDaemon => {
-                            if matches!(state.status, DaemonStatus::Stopped | DaemonStatus::Error(_)) {
-                                state.log_lines.clear();
-                                state.log_scroll = 0;
-                                state.log_auto_scroll = true;
-                                state.status_message = None;
-                                match daemon_tx.try_send(DaemonCommand::Start(Box::new(state.config.clone()))) {
-                                    Ok(()) => {
-                                        state.status = DaemonStatus::Starting;
-                                    }
-                                    Err(_) => {
-                                        state.status_message =
-                                            Some(("Command channel full, try again".to_string(), true));
-                                    }
-                                }
-                            }
+                        SettingsField::Network => {
+                            state.config.cycle_network();
+                            auto_save_and_reconnect(state, settings_tx);
                         }
-                        // Editable fields
-                        _ => {
+                        SettingsField::AnalysisStart => {
+                            state.config.analyze_from_pruning_point = !state.config.analyze_from_pruning_point;
+                            auto_save_and_reconnect(state, settings_tx);
+                        }
+                        SettingsField::Url | SettingsField::RefreshInterval => {
                             state.editing = true;
                             state.edit_buffer = get_field_value(&state.config, field);
                         }
@@ -686,16 +710,21 @@ pub fn handle_integrated_node_keys(
                 }
             }
             KeyCode::Left | KeyCode::Right => {
-                if let Some(field) = ConfigField::from_index(state.selected_field) {
+                if let Some(field) = SettingsField::from_index(state.selected_field) {
                     match field {
-                        ConfigField::Network => { state.config.cycle_network(); auto_save_config(state); }
-                        ConfigField::LogLevel => { state.config.cycle_log_level(); auto_save_config(state); }
-                        ConfigField::RocksdbPreset => { state.config.cycle_rocksdb_preset(); auto_save_config(state); }
+                        SettingsField::Network => {
+                            state.config.cycle_network();
+                            auto_save_and_reconnect(state, settings_tx);
+                        }
+                        SettingsField::AnalysisStart => {
+                            state.config.analyze_from_pruning_point = !state.config.analyze_from_pruning_point;
+                            auto_save_and_reconnect(state, settings_tx);
+                        }
                         _ => {}
                     }
                 }
             }
-            KeyCode::Char('r') => match DaemonConfig::load() {
+            KeyCode::Char('r') => match AppConfig::load() {
                 Ok(c) => {
                     state.config = c;
                     state.status_message = Some(("Config reloaded".to_string(), false));
@@ -709,90 +738,62 @@ pub fn handle_integrated_node_keys(
     }
 }
 
-fn auto_save_config(state: &mut IntegratedNodeState) {
+fn auto_save_and_reconnect(
+    state: &mut SettingsState,
+    settings_tx: &tokio::sync::mpsc::Sender<SettingsCommand>,
+) {
     if let Err(e) = state.config.save() {
-        state.status_message = Some((format!("Auto-save failed: {}", e), true));
+        state.status_message = Some((format!("Save failed: {}", e), true));
+        return;
+    }
+    match settings_tx.try_send(SettingsCommand::Reconnect(state.config.clone())) {
+        Ok(()) => {
+            state.status_message = Some(("Saved & reconnecting...".to_string(), false));
+        }
+        Err(_) => {
+            state.status_message = Some(("Saved (reconnect pending)".to_string(), false));
+        }
     }
 }
 
-fn get_field_value(config: &DaemonConfig, field: ConfigField) -> String {
-    use ConfigField::*;
+fn get_field_value(config: &AppConfig, field: SettingsField) -> String {
     match field {
-        RamScale => format!("{:.1}", config.ram_scale),
-        AsyncThreads => config.async_threads.to_string(),
-        Listen => config.listen.clone().unwrap_or_default(),
-        ExternalIp => config.externalip.clone().unwrap_or_default(),
-        OutboundTarget => config.outbound_target.to_string(),
-        InboundLimit => config.inbound_limit.to_string(),
-        ConnectPeers => config.connect_peers.clone(),
-        AddPeers => config.add_peers.clone(),
-        AppDir => config.app_dir.clone(),
-        RocksdbWalDir => config.rocksdb_wal_dir.clone().unwrap_or_default(),
-        RocksdbCacheSize => config.rocksdb_cache_size.map_or(String::new(), |v| v.to_string()),
-        RetentionDays => config.retention_period_days.map_or(String::new(), |v| format!("{:.1}", v)),
-        RpcMaxClients => config.rpc_max_clients.to_string(),
-        _ => String::new(),
+        SettingsField::Url => config.url.clone().unwrap_or_default(),
+        SettingsField::Network => config.network.clone(),
+        SettingsField::RefreshInterval => config.refresh_interval_ms.to_string(),
+        SettingsField::AnalysisStart => {
+            if config.analyze_from_pruning_point {
+                "Pruning Point".to_string()
+            } else {
+                "Current".to_string()
+            }
+        }
     }
 }
 
-fn apply_field_edit(config: &mut DaemonConfig, field: ConfigField, val: &str) {
-    use ConfigField::*;
+fn apply_field_edit(state: &mut SettingsState, field: SettingsField, val: &str) {
     let trimmed = val.trim();
     match field {
-        RamScale => {
-            if let Ok(v) = trimmed.parse::<f64>() {
-                config.ram_scale = v.clamp(0.1, 10.0);
-            }
+        SettingsField::Url => {
+            state.config.url = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
         }
-        AsyncThreads => {
-            if let Ok(v) = trimmed.parse::<usize>()
-                && v > 0
+        SettingsField::Network => {
+            // Network is cycled, not typed
+        }
+        SettingsField::RefreshInterval => {
+            if let Ok(v) = trimmed.parse::<u64>()
+                && v >= 100
             {
-                config.async_threads = v;
+                state.config.refresh_interval_ms = v;
             }
         }
-        Listen => {
-            config.listen = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) };
+        SettingsField::AnalysisStart => {
+            // Cycled, not typed
         }
-        ExternalIp => {
-            config.externalip = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) };
-        }
-        OutboundTarget => {
-            if let Ok(v) = trimmed.parse::<usize>() {
-                config.outbound_target = v;
-            }
-        }
-        InboundLimit => {
-            if let Ok(v) = trimmed.parse::<usize>() {
-                config.inbound_limit = v;
-            }
-        }
-        ConnectPeers => {
-            config.connect_peers = trimmed.to_string();
-        }
-        AddPeers => {
-            config.add_peers = trimmed.to_string();
-        }
-        AppDir => {
-            if !trimmed.is_empty() {
-                config.app_dir = trimmed.to_string();
-            }
-        }
-        RocksdbWalDir => {
-            config.rocksdb_wal_dir = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) };
-        }
-        RocksdbCacheSize => {
-            config.rocksdb_cache_size = if trimmed.is_empty() { None } else { trimmed.parse().ok() };
-        }
-        RetentionDays => {
-            config.retention_period_days = if trimmed.is_empty() { None } else { trimmed.parse().ok() };
-        }
-        RpcMaxClients => {
-            if let Ok(v) = trimmed.parse::<usize>() {
-                config.rpc_max_clients = v;
-            }
-        }
-        _ => {}
     }
 }
 

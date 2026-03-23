@@ -1,57 +1,11 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Instant;
 
 use crate::analytics::{AggregatedView, AnalyticsEngine};
-use crate::config::DaemonConfig;
+use crate::config::AppConfig;
 use crate::rpc::types::*;
 
-#[derive(Debug, Clone)]
-pub struct DagVisualizerBlock {
-    pub hash_full: String,
-    pub is_selected_parent: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct DagVisualizerColumn {
-    pub blocks: Vec<DagVisualizerBlock>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct DagVisualizer {
-    pub columns: VecDeque<DagVisualizerColumn>,
-}
-
-impl DagVisualizer {
-    pub fn update(&mut self, tip_hashes: &[String], virtual_parents: &[String]) {
-        let parent_set: HashSet<&str> = virtual_parents.iter().map(|s| s.as_str()).collect();
-        let blocks: Vec<DagVisualizerBlock> = tip_hashes
-            .iter()
-            .map(|h| DagVisualizerBlock {
-                hash_full: h.clone(),
-                is_selected_parent: parent_set.contains(h.as_str()),
-            })
-            .collect();
-
-        if !blocks.is_empty() {
-            // Only add if tips changed from last column (compare full hashes)
-            let should_add = self.columns.back().is_none_or(|last| {
-                let last_hashes: Vec<&str> =
-                    last.blocks.iter().map(|b| b.hash_full.as_str()).collect();
-                let new_hashes: Vec<&str> = blocks.iter().map(|b| b.hash_full.as_str()).collect();
-                last_hashes != new_hashes
-            });
-
-            if should_add {
-                self.columns.push_back(DagVisualizerColumn { blocks });
-                // Keep last 30 columns
-                if self.columns.len() > 30 {
-                    self.columns.pop_front();
-                }
-            }
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -151,7 +105,7 @@ pub enum Tab {
     BlockDag,
     Analytics,
     RpcExplorer,
-    IntegratedNode,
+    Settings,
 }
 
 impl Tab {
@@ -163,7 +117,7 @@ impl Tab {
             Tab::BlockDag,
             Tab::Analytics,
             Tab::RpcExplorer,
-            Tab::IntegratedNode,
+            Tab::Settings,
         ]
     }
 
@@ -175,7 +129,7 @@ impl Tab {
             Tab::BlockDag => "4:BlockDAG",
             Tab::Analytics => "5:Analytics",
             Tab::RpcExplorer => "6:RPC Cmds",
-            Tab::IntegratedNode => "7:Node",
+            Tab::Settings => "7:Settings",
         }
     }
 }
@@ -209,17 +163,17 @@ impl MiningPanel {
 #[derive(Default)]
 pub struct MiningTabState {
     pub active_panel: MiningPanel,
-    pub miners_scroll: usize,
-    pub pools_scroll: usize,
-    pub versions_scroll: usize,
+    pub miners_selected: usize,
+    pub pools_selected: usize,
+    pub versions_selected: usize,
 }
 
 impl MiningTabState {
-    pub fn scroll_mut(&mut self) -> &mut usize {
+    pub fn selected_mut(&mut self) -> &mut usize {
         match self.active_panel {
-            MiningPanel::Miners => &mut self.miners_scroll,
-            MiningPanel::Pools => &mut self.pools_scroll,
-            MiningPanel::Versions => &mut self.versions_scroll,
+            MiningPanel::Miners => &mut self.miners_selected,
+            MiningPanel::Pools => &mut self.pools_selected,
+            MiningPanel::Versions => &mut self.versions_selected,
         }
     }
 }
@@ -251,15 +205,23 @@ impl ViewMode {
 pub enum TimeWindow {
     #[default]
     OneMin,
+    FifteenMin,
+    ThirtyMin,
     OneHour,
+    SixHour,
+    TwelveHour,
     TwentyFourHour,
 }
 
 impl TimeWindow {
     pub fn cycle(&mut self) {
         *self = match self {
-            Self::OneMin => Self::OneHour,
-            Self::OneHour => Self::TwentyFourHour,
+            Self::OneMin => Self::FifteenMin,
+            Self::FifteenMin => Self::ThirtyMin,
+            Self::ThirtyMin => Self::OneHour,
+            Self::OneHour => Self::SixHour,
+            Self::SixHour => Self::TwelveHour,
+            Self::TwelveHour => Self::TwentyFourHour,
             Self::TwentyFourHour => Self::OneMin,
         };
     }
@@ -267,52 +229,33 @@ impl TimeWindow {
     pub fn label(&self) -> &'static str {
         match self {
             Self::OneMin => "1m",
+            Self::FifteenMin => "15m",
+            Self::ThirtyMin => "30m",
             Self::OneHour => "1h",
+            Self::SixHour => "6h",
+            Self::TwelveHour => "12h",
             Self::TwentyFourHour => "24h",
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DaemonStatus {
-    Stopped,
-    Starting,
-    Running,
-    Stopping,
-    Error(String),
-}
-
-pub struct IntegratedNodeState {
-    pub config: DaemonConfig,
-    pub status: DaemonStatus,
+pub struct SettingsState {
+    pub config: AppConfig,
     pub selected_field: usize,
     pub editing: bool,
     pub edit_buffer: String,
-    pub log_lines: VecDeque<String>,
-    pub log_scroll: usize,
-    pub log_auto_scroll: bool,
-    pub started_at: Option<std::time::Instant>,
     pub status_message: Option<(String, bool)>, // (message, is_error)
 }
 
-impl IntegratedNodeState {
-    pub fn new(config: DaemonConfig) -> Self {
+impl SettingsState {
+    pub fn new(config: AppConfig) -> Self {
         Self {
             config,
-            status: DaemonStatus::Stopped,
             selected_field: 0,
             editing: false,
             edit_buffer: String::new(),
-            log_lines: VecDeque::new(),
-            log_scroll: 0,
-            log_auto_scroll: true,
-            started_at: None,
             status_message: None,
         }
-    }
-
-    pub fn is_running(&self) -> bool {
-        matches!(self.status, DaemonStatus::Running | DaemonStatus::Starting)
     }
 }
 
@@ -516,7 +459,6 @@ pub struct NodeState {
     pub coin_supply: Option<CoinSupplyInfo>,
     pub fee_estimate: Option<FeeEstimateInfo>,
     pub mining_info: Option<MiningInfo>,
-    pub dag_visualizer: DagVisualizer,
     pub dag_stats: DagStats,
     pub sink_blue_score: Option<u64>,
     pub node_url: Option<String>,
@@ -536,7 +478,6 @@ impl Default for NodeState {
             coin_supply: None,
             fee_estimate: None,
             mining_info: None,
-            dag_visualizer: DagVisualizer::default(),
             dag_stats: DagStats::default(),
             sink_blue_score: None,
             node_url: None,
@@ -549,15 +490,23 @@ impl Default for NodeState {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct AnalyticsSyncProgress {
+    pub start_daa: u64,
+    pub last_daa: u64,
+    pub tip_daa: u64,
+    pub from_pruning_point: bool,
+}
+
 #[derive(Default)]
 pub struct AnalyticsState {
     pub engine: Option<Arc<tokio::sync::RwLock<AnalyticsEngine>>>,
     pub focus: usize,
-    pub view_modes: [ViewMode; 5],
-    pub time_windows: [TimeWindow; 5],
-    pub sync_progress: Option<(u64, u64)>,
+    pub view_modes: [ViewMode; 6],
+    pub time_windows: [TimeWindow; 6],
+    pub sync_progress: Option<AnalyticsSyncProgress>,
     pub reorg_notification: Option<String>,
-    pub cached_views: Option<[AggregatedView; 5]>,
+    pub cached_views: Option<[AggregatedView; 6]>,
 }
 
 #[derive(Default)]
@@ -588,14 +537,16 @@ pub struct App {
     pub show_help: bool,
     pub quit_confirm: bool,
     pub dirty: bool,
-    pub has_direct_node: bool,
 
     pub mining_tab: MiningTabState,
-    pub integrated_node: IntegratedNodeState,
+    pub settings: SettingsState,
+
+    pub last_click: Option<Instant>,
+    pub clipboard_flash: Option<String>,
 }
 
 impl App {
-    pub fn new(daemon_config: DaemonConfig) -> Self {
+    pub fn new(config: AppConfig) -> Self {
         Self {
             active_tab: Tab::Dashboard,
             should_quit: false,
@@ -611,23 +562,15 @@ impl App {
             show_help: false,
             quit_confirm: false,
             dirty: true,
-            has_direct_node: false,
             mining_tab: MiningTabState::default(),
-            integrated_node: IntegratedNodeState::new(daemon_config),
+            settings: SettingsState::new(config),
+            last_click: None,
+            clipboard_flash: None,
         }
     }
 
-    pub fn is_daemon_active(&self) -> bool {
-        matches!(self.integrated_node.status, DaemonStatus::Running)
-    }
-
-    pub fn is_node_syncing(&self) -> bool {
-        self.is_daemon_active()
-            && !self
-                .node
-                .server_info
-                .as_ref()
-                .is_some_and(|s| s.is_synced)
+    pub fn has_direct_url(&self) -> bool {
+        self.settings.config.url.is_some()
     }
 
     pub fn tab_index(&self) -> usize {
@@ -667,12 +610,12 @@ mod tests {
         assert_eq!(Tab::BlockDag.title(), "4:BlockDAG");
         assert_eq!(Tab::Analytics.title(), "5:Analytics");
         assert_eq!(Tab::RpcExplorer.title(), "6:RPC Cmds");
-        assert_eq!(Tab::IntegratedNode.title(), "7:Node");
+        assert_eq!(Tab::Settings.title(), "7:Settings");
     }
 
     #[test]
     fn tab_index_matches_all_order() {
-        let mut app = App::new(DaemonConfig::default());
+        let mut app = App::new(AppConfig::default());
         for (i, tab) in Tab::all().iter().enumerate() {
             app.active_tab = *tab;
             assert_eq!(app.tab_index(), i);
@@ -681,7 +624,7 @@ mod tests {
 
     #[test]
     fn next_tab_cycles_forward() {
-        let mut app = App::new(DaemonConfig::default());
+        let mut app = App::new(AppConfig::default());
         assert_eq!(app.active_tab, Tab::Dashboard);
         app.next_tab();
         assert_eq!(app.active_tab, Tab::Mining);
@@ -707,7 +650,7 @@ mod tests {
 
     #[test]
     fn prev_tab_cycles_backward() {
-        let mut app = App::new(DaemonConfig::default());
+        let mut app = App::new(AppConfig::default());
         app.prev_tab();
         let last = *Tab::all().last().unwrap();
         assert_eq!(app.active_tab, last); // wraps from 0
@@ -1019,46 +962,6 @@ mod tests {
                 .available_methods
                 .contains(&"estimate_network_hashes_per_second")
         );
-    }
-
-    // --- DagVisualizer ---
-
-    #[test]
-    fn dag_visualizer_starts_empty() {
-        let vis = DagVisualizer::default();
-        assert!(vis.columns.is_empty());
-    }
-
-    #[test]
-    fn dag_visualizer_adds_column() {
-        let mut vis = DagVisualizer::default();
-        let tips = vec!["abc123".to_string(), "def456".to_string()];
-        let parents = vec!["abc123".to_string()];
-        vis.update(&tips, &parents);
-        assert_eq!(vis.columns.len(), 1);
-        assert_eq!(vis.columns[0].blocks.len(), 2);
-        assert!(vis.columns[0].blocks[0].is_selected_parent);
-        assert!(!vis.columns[0].blocks[1].is_selected_parent);
-    }
-
-    #[test]
-    fn dag_visualizer_skips_duplicate() {
-        let mut vis = DagVisualizer::default();
-        let tips = vec!["abc12345".to_string()];
-        let parents = vec![];
-        vis.update(&tips, &parents);
-        vis.update(&tips, &parents);
-        assert_eq!(vis.columns.len(), 1);
-    }
-
-    #[test]
-    fn dag_visualizer_caps_at_30() {
-        let mut vis = DagVisualizer::default();
-        for i in 0..35 {
-            let tips = vec![format!("hash{:04}", i)];
-            vis.update(&tips, &[]);
-        }
-        assert_eq!(vis.columns.len(), 30);
     }
 
     // --- DagStats ---
