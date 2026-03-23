@@ -446,10 +446,9 @@ pub fn handle_rpc_explorer_keys(
     }
 
     match key {
-        KeyCode::Up
-            if app.rpc_explorer.selected_method > 0 => {
-                app.rpc_explorer.selected_method -= 1;
-            }
+        KeyCode::Up if app.rpc_explorer.selected_method > 0 => {
+            app.rpc_explorer.selected_method -= 1;
+        }
         KeyCode::Down => {
             let len = app.rpc_explorer.available_methods.len();
             if len > 0 && app.rpc_explorer.selected_method < len - 1 {
@@ -518,16 +517,16 @@ pub fn handle_mempool_keys(app: &mut App, key: KeyCode) {
             app.mempool_selected = app.mempool_selected.saturating_sub(1);
         }
         KeyCode::Down | KeyCode::Char('j')
-            if entry_count > 0 && app.mempool_selected < entry_count.saturating_sub(1) => {
-                app.mempool_selected += 1;
-            }
+            if entry_count > 0 && app.mempool_selected < entry_count.saturating_sub(1) =>
+        {
+            app.mempool_selected += 1;
+        }
         KeyCode::Home | KeyCode::Char('g') => {
             app.mempool_selected = 0;
         }
-        KeyCode::End | KeyCode::Char('G')
-            if entry_count > 0 => {
-                app.mempool_selected = entry_count - 1;
-            }
+        KeyCode::End | KeyCode::Char('G') if entry_count > 0 => {
+            app.mempool_selected = entry_count - 1;
+        }
         KeyCode::Char('o') => {
             if let Some(ref mempool) = app.node.mempool_state
                 && app.mempool_selected < mempool.entries.len()

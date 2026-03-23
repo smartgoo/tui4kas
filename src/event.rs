@@ -22,18 +22,15 @@ impl EventHandler {
             loop {
                 if event::poll(tick_rate).unwrap_or(false) {
                     match event::read() {
-                        Ok(Event::Key(key))
-                            if tx.send(AppEvent::Key(key)).is_err() => {
-                                return;
-                            }
-                        Ok(Event::Mouse(mouse))
-                            if tx.send(AppEvent::Mouse(mouse)).is_err() => {
-                                return;
-                            }
-                        Ok(Event::Resize(w, h))
-                            if tx.send(AppEvent::Resize(w, h)).is_err() => {
-                                return;
-                            }
+                        Ok(Event::Key(key)) if tx.send(AppEvent::Key(key)).is_err() => {
+                            return;
+                        }
+                        Ok(Event::Mouse(mouse)) if tx.send(AppEvent::Mouse(mouse)).is_err() => {
+                            return;
+                        }
+                        Ok(Event::Resize(w, h)) if tx.send(AppEvent::Resize(w, h)).is_err() => {
+                            return;
+                        }
                         _ => {}
                     }
                 } else if tx.send(AppEvent::Tick).is_err() {
