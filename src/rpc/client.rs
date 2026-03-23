@@ -347,13 +347,13 @@ impl RpcManager {
 
         let unique_miners = miner_counts.len();
         let mut all_miners: Vec<(String, usize)> = miner_counts.into_iter().collect();
-        all_miners.sort_by(|a, b| b.1.cmp(&a.1));
+        all_miners.sort_by_key(|b| std::cmp::Reverse(b.1));
 
         let mut pools: Vec<(String, usize)> = pool_counts.into_iter().collect();
-        pools.sort_by(|a, b| b.1.cmp(&a.1));
+        pools.sort_by_key(|b| std::cmp::Reverse(b.1));
 
         let mut node_versions: Vec<(String, usize)> = version_counts.into_iter().collect();
-        node_versions.sort_by(|a, b| b.1.cmp(&a.1));
+        node_versions.sort_by_key(|b| std::cmp::Reverse(b.1));
 
         Ok(crate::rpc::types::MiningInfo {
             hashrate,

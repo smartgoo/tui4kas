@@ -195,7 +195,7 @@ fn cap_hashmap(map: &mut HashMap<String, usize>, max_entries: usize) {
         return;
     }
     let mut entries: Vec<(String, usize)> = map.drain().collect();
-    entries.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+    entries.sort_unstable_by_key(|b| std::cmp::Reverse(b.1));
     entries.truncate(max_entries);
     *map = entries.into_iter().collect();
 }
@@ -489,12 +489,12 @@ fn build_aggregated_view<'a>(items: impl Iterator<Item = AggregateItem<'a>>) -> 
     view.top_receivers = top_n_sorted(receiver_totals, 20);
     view.protocol_counts = {
         let mut v: Vec<_> = protocol_totals.into_iter().collect();
-        v.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+        v.sort_unstable_by_key(|b| std::cmp::Reverse(b.1));
         v
     };
     view.protocol_fees = {
         let mut v: Vec<_> = protocol_fee_totals.into_iter().collect();
-        v.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+        v.sort_unstable_by_key(|b| std::cmp::Reverse(b.1));
         v
     };
 
@@ -503,7 +503,7 @@ fn build_aggregated_view<'a>(items: impl Iterator<Item = AggregateItem<'a>>) -> 
 
 fn top_n_sorted(map: HashMap<String, usize>, n: usize) -> Vec<(String, usize)> {
     let mut entries: Vec<(String, usize)> = map.into_iter().collect();
-    entries.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+    entries.sort_unstable_by_key(|b| std::cmp::Reverse(b.1));
     entries.truncate(n);
     entries
 }
