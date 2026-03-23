@@ -1,15 +1,24 @@
 # tui4kas - Kaspa TUI
 
+> [!CAUTION]
+> **This is an EXPERIMENTAL & VIBE CODED project. Analytics processes have not been audited yet. Data likely has inaccuracies.**
+>
+> Please consider this alpha status.
+>
+
 A terminal UI dashboard for monitoring Kaspa L1 blockchain nodes via wRPC.
 
 Built with [Ratatui](https://ratatui.rs) and [rusty-kaspa](https://github.com/kaspanet/rusty-kaspa).
 
 ## Features
 
-- **Dashboard** — Server info, DAG summary, coin supply, fee estimates
+- **Dashboard** — Server info, network stats, coin supply, markets, mempool & fees, mining info
+- **Mining** — Mining dashboard with hashrate, block rewards, and pool stats
 - **Mempool** — Live transaction table with fees and orphan status
-- **BlockDAG** — Tip hashes, difficulty, DAA score, pruning point
-- **RPC Explorer** — Interactive method selector with formatted responses
+- **BlockDAG** — DAG visualizer, metrics, tip/parent hash selection with block info popup
+- **Analytics** — Fee analysis, transaction summary, top receivers with time windows
+- **RPC Explorer** — Interactive method selector with scrollable formatted responses
+- **Settings** — In-app configuration
 - **Command Line** — Vim-style `:` command interface with history
 
 ## Prerequisites
@@ -62,21 +71,32 @@ tui4kas --network testnet-10 --refresh-interval-ms 2000
 
 ```
 src/
-  main.rs          Event loop & terminal setup
-  app.rs           App state, tabs, command line
-  cli.rs           CLI argument parsing (clap)
-  event.rs         Crossterm event handler
+  main.rs              Event loop & terminal setup
+  app.rs               App state, tabs, command line
+  cli.rs               CLI argument parsing (clap)
+  config.rs            Persistent app configuration (TOML)
+  connection.rs        Connection manager & polling handles
+  event.rs             Crossterm event handler
+  keys.rs              Key event handling & dispatch
+  analytics.rs         Analytics engine (protocol detection, aggregation)
+  analytics_streaming.rs  VSPC V2 streaming analytics task
   rpc/
-    client.rs      RpcManager (connect, poll, execute)
-    types.rs       UI-friendly RPC type wrappers
+    mod.rs             RPC module re-exports
+    client.rs          RpcManager (connect, poll, execute)
+    market.rs          CoinGecko market data polling
+    types.rs           UI-friendly RPC type wrappers
   ui/
-    mod.rs         Draw dispatcher
-    common.rs      Header & tab bar
-    dashboard.rs   Dashboard tab
-    mempool.rs     Mempool tab
-    blockdag.rs    BlockDAG tab
-    rpc_explorer.rs RPC Explorer tab
-    command.rs     Command line overlay
+    mod.rs             Draw dispatcher
+    common.rs          Header & tab bar
+    dashboard.rs       Dashboard tab
+    mining.rs          Mining tab
+    mempool.rs         Mempool tab
+    blockdag.rs        BlockDAG tab
+    analytics.rs       Analytics tab
+    rpc_explorer.rs    RPC Explorer tab
+    settings.rs        Settings tab
+    help.rs            Help overlay
+    command.rs         Command line overlay
 ```
 
 ## License
