@@ -30,7 +30,6 @@ pub fn render_help(frame: &mut Frame, area: Rect, app: &App) {
     let global_keys = [
         ("1-6", "Switch to tab"),
         ("Tab/Shift+Tab", "Next/previous tab"),
-        (":", "Open command line"),
         ("p", "Pause/resume polling"),
         ("?", "Toggle this help"),
         ("c / dbl-click", "Copy focused text"),
@@ -119,24 +118,6 @@ pub fn render_help(frame: &mut Frame, area: Rect, app: &App) {
         section_style,
     )));
     for (key, desc) in &tab_keys {
-        lines.push(Line::from(vec![
-            Span::styled(format!("  {:<18}", key), key_style),
-            Span::styled(*desc, desc_style),
-        ]));
-    }
-
-    lines.push(Line::from(""));
-
-    // Command line section
-    lines.push(Line::from(Span::styled("Command Line", section_style)));
-    let cmd_keys = [
-        ("Esc", "Close command line"),
-        ("Enter", "Execute command"),
-        ("Up/Down", "Command history"),
-        ("Left/Right", "Move cursor"),
-        ("Home/End", "Start/end of line"),
-    ];
-    for (key, desc) in &cmd_keys {
         lines.push(Line::from(vec![
             Span::styled(format!("  {:<18}", key), key_style),
             Span::styled(*desc, desc_style),

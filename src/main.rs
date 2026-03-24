@@ -172,25 +172,16 @@ async fn main() -> Result<()> {
             AppEvent::Key(key) => {
                 let mut app_guard = app.write().await;
 
-                if app_guard.command_line.active {
-                    app_guard.dirty = true;
-                    if let Some(cmd) = keys::handle_command_mode_keys(&mut app_guard, key.code) {
-                        drop(app_guard);
-                        keys::handle_command(&cmd, &app, &rpc_for_explorer).await;
-                        continue;
-                    }
-                } else {
-                    app_guard.dirty = true;
-                    let consumed = keys::handle_normal_keys(
-                        &mut app_guard,
-                        key,
-                        &rpc_for_explorer,
-                        &app,
-                        &settings_tx,
-                    );
-                    if consumed {
-                        continue;
-                    }
+                app_guard.dirty = true;
+                let consumed = keys::handle_normal_keys(
+                    &mut app_guard,
+                    key,
+                    &rpc_for_explorer,
+                    &app,
+                    &settings_tx,
+                );
+                if consumed {
+                    continue;
                 }
 
                 if app_guard.should_quit {

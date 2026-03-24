@@ -6,7 +6,7 @@ use base64::Engine;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use tokio::sync::RwLock;
 
-use crate::app::{App, CommandLine, MiningPanel, RpcExplorerPanel, SettingsState, Tab};
+use crate::app::{App, MiningPanel, RpcExplorerPanel, SettingsState, Tab};
 use crate::config::AppConfig;
 use crate::rpc::client::RpcManager;
 use crate::rpc::types::sompi_to_kas;
@@ -78,58 +78,8 @@ impl SettingsField {
     }
 }
 
-/// Handle command-mode key input. Returns `Some(cmd)` if a command was submitted
-/// (caller must drop the app guard and dispatch the command).
-pub fn handle_command_mode_keys(app: &mut App, code: KeyCode) -> Option<String> {
-    match code {
-        KeyCode::Esc => {
-            app.command_line.deactivate();
-            app.command_line.show_output = false;
-            None
-        }
-        KeyCode::Enter => app.command_line.submit(),
-        KeyCode::Backspace => {
-            app.command_line.backspace();
-            None
-        }
-        KeyCode::Delete => {
-            app.command_line.delete_char();
-            None
-        }
-        KeyCode::Left => {
-            app.command_line.move_left();
-            None
-        }
-        KeyCode::Right => {
-            app.command_line.move_right();
-            None
-        }
-        KeyCode::Home => {
-            app.command_line.move_home();
-            None
-        }
-        KeyCode::End => {
-            app.command_line.move_end();
-            None
-        }
-        KeyCode::Up => {
-            app.command_line.history_up();
-            None
-        }
-        KeyCode::Down => {
-            app.command_line.history_down();
-            None
-        }
-        KeyCode::Char(c) => {
-            app.command_line.insert_char(c);
-            None
-        }
-        _ => None,
-    }
-}
-
-/// Handle normal-mode key input (not command mode). Returns `true` if the event
-/// was consumed by an overlay (help, command output) and the caller should `continue`.
+/// Handle normal-mode key input. Returns `true` if the event
+/// was consumed by an overlay (help) and the caller should `continue`.
 pub fn handle_normal_keys(
     app: &mut App,
     key: KeyEvent,
@@ -147,35 +97,6 @@ pub fn handle_normal_keys(
         match key.code {
             KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
                 app.show_help = false;
-            }
-            _ => {}
-        }
-        return true;
-    }
-
-    // Command output overlay: intercept scroll keys
-    if app.command_line.show_output && !app.command_line.output.is_empty() {
-        match key.code {
-            KeyCode::Esc => {
-                app.command_line.show_output = false;
-            }
-            KeyCode::Char('j') => {
-                app.command_line.output_scroll = app.command_line.output_scroll.saturating_add(1);
-            }
-            KeyCode::Char('k') => {
-                app.command_line.output_scroll = app.command_line.output_scroll.saturating_sub(1);
-            }
-            KeyCode::Char('J') => {
-                app.command_line.output_scroll = app.command_line.output_scroll.saturating_add(10);
-            }
-            KeyCode::Char('K') => {
-                app.command_line.output_scroll = app.command_line.output_scroll.saturating_sub(10);
-            }
-            KeyCode::Char('g') => {
-                app.command_line.output_scroll = 0;
-            }
-            KeyCode::Char('G') => {
-                app.command_line.output_scroll = usize::MAX;
             }
             _ => {}
         }
@@ -201,7 +122,6 @@ pub fn handle_normal_keys(
             }
         }
         (KeyCode::Esc, _) => {
-            app.command_line.show_output = false;
             // Dispatch Esc to tab-specific handlers for popup closing
             match app.active_tab {
                 Tab::Mempool => handle_mempool_keys(app, key.code),
@@ -211,9 +131,6 @@ pub fn handle_normal_keys(
         }
         (KeyCode::Char('?'), _) => {
             app.show_help = true;
-        }
-        (KeyCode::Char(':'), _) => {
-            app.command_line.activate();
         }
         (KeyCode::Char('p'), _) => {
             app.paused = !app.paused;
@@ -777,44 +694,3 @@ fn apply_field_edit(state: &mut SettingsState, field: SettingsField, val: &str) 
     }
 }
 
-pub async fn handle_command(cmd: &str, app: &Arc<RwLock<App>>, rpc: &Arc<RpcManager>) {
-    let parts: Vec<&str> = cmd.trim().splitn(2, ' ').collect();
-    let command = parts[0];
-
-    match command {
-        "help" => {
-            let mut help_text = String::from("Available commands:\n\n");
-            for (name, desc) in CommandLine::available_commands() {
-                help_text.push_str(&format!("  {:<28} {}\n", name, desc));
-            }
-            help_text
-                .push_str("\nPress ':' to open command line, Esc to close, Up/Down for history");
-            let mut app_guard = app.write().await;
-            app_guard
-                .command_line
-                .push_output(cmd.to_string(), help_text, false);
-        }
-        "clear" => {
-            let mut app_guard = app.write().await;
-            app_guard.command_line.output.clear();
-            app_guard.command_line.show_output = false;
-        }
-        _ => {
-            // Try as RPC call
-            match rpc.execute_rpc_call(command).await {
-                Ok(response) => {
-                    let mut app_guard = app.write().await;
-                    app_guard
-                        .command_line
-                        .push_output(cmd.to_string(), response, false);
-                }
-                Err(e) => {
-                    let mut app_guard = app.write().await;
-                    app_guard
-                        .command_line
-                        .push_output(cmd.to_string(), e.to_string(), true);
-                }
-            }
-        }
-    }
-}
