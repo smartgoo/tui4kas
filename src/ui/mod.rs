@@ -6,7 +6,7 @@ mod mempool;
 mod mining;
 mod rpc_explorer;
 mod settings;
-mod statusbar;
+mod contextbar;
 
 use ratatui::Frame;
 
@@ -35,7 +35,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Tab::Settings => settings::render(frame, chunks[1], app),
     }
 
-    statusbar::render(frame, chunks[2], app);
+    contextbar::render(frame, chunks[2], app);
 
     // Help overlay on top of everything
     if app.show_help {
