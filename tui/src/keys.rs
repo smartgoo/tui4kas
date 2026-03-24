@@ -10,7 +10,6 @@ use crate::app::{App, MiningPanel, RpcExplorerPanel, SettingsState, Tab};
 use crate::config::AppConfig;
 use crate::rpc::client::RpcManager;
 
-
 /// Base URL for the Kaspa block explorer.
 const EXPLORER_BASE: &str = "https://kaspa.stream";
 
@@ -705,4 +704,3 @@ fn apply_field_edit(state: &mut SettingsState, field: SettingsField, val: &str) 
         SettingsField::AnalysisStart => false, // cycled, not typed
     }
 }
-

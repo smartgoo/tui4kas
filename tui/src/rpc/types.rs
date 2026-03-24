@@ -227,15 +227,6 @@ pub fn format_hashrate(hps: f64) -> String {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct MarketData {
-    pub price_usd: f64,
-    pub price_btc: f64,
-    pub market_cap: f64,
-    pub volume_24h: f64,
-    pub price_change_24h_pct: f64,
-}
-
 /// Single source of truth for all RPC methods available in the explorer and command line.
 /// Each entry is (method_name, description).
 pub const RPC_METHODS: &[(&str, &str)] = &[

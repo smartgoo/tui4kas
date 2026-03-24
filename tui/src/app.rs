@@ -2,6 +2,8 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Instant;
 
+use tui4kas_core::price::KaspaPrice;
+
 use crate::analytics::{AggregatedView, AnalyticsEngine};
 use crate::config::AppConfig;
 use crate::rpc::types::*;
@@ -385,7 +387,7 @@ pub struct App {
 
     pub node: NodeState,
     pub analytics: AnalyticsState,
-    pub market_data: Option<MarketData>,
+    pub market_data: Option<KaspaPrice>,
 
     pub rpc_explorer: RpcExplorerState,
 
@@ -577,5 +579,4 @@ mod tests {
         stats.update(Some(500));
         assert!(stats.blue_block_rate().is_none());
     }
-
 }

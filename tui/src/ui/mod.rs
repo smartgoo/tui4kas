@@ -1,12 +1,12 @@
 mod analytics;
 pub(crate) mod common;
+mod contextbar;
 mod dashboard;
 mod help;
 mod mempool;
 mod mining;
 mod rpc_explorer;
 mod settings;
-mod contextbar;
 
 use ratatui::Frame;
 
@@ -19,7 +19,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // header
-            Constraint::Min(0),   // main content
+            Constraint::Min(0),    // main content
             Constraint::Length(3), // status bar
         ])
         .split(frame.area());

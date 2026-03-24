@@ -1,0 +1,13 @@
+[package]
+name = "tui4kas-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+clap.workspace = true
+log.workspace = true
+tokio.workspace = true
+tui4kas-core.workspace = true

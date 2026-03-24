@@ -224,12 +224,12 @@ fn render_network_stats(frame: &mut Frame, area: Rect, app: &App, is_active: boo
 
 fn render_markets(frame: &mut Frame, area: Rect, app: &App, is_active: bool) {
     let lines = if let Some(ref market) = app.market_data {
-        let change_color = if market.price_change_24h_pct >= 0.0 {
+        let change_color = if market.usd_24h_change >= 0.0 {
             Color::Green
         } else {
             Color::Red
         };
-        let change_prefix = if market.price_change_24h_pct >= 0.0 {
+        let change_prefix = if market.usd_24h_change >= 0.0 {
             "+"
         } else {
             ""
@@ -238,24 +238,24 @@ fn render_markets(frame: &mut Frame, area: Rect, app: &App, is_active: bool) {
         vec![
             Line::from(vec![
                 Span::styled(" Price (USD):   ", Style::default().fg(Color::DarkGray)),
-                Span::raw(format!("${:.6}", market.price_usd)),
+                Span::raw(format!("${:.6}", market.usd)),
                 Span::raw("  "),
                 Span::styled(
-                    format!("{}{:.2}%", change_prefix, market.price_change_24h_pct),
+                    format!("{}{:.2}%", change_prefix, market.usd_24h_change),
                     Style::default().fg(change_color),
                 ),
             ]),
             Line::from(vec![
                 Span::styled(" Price (BTC):   ", Style::default().fg(Color::DarkGray)),
-                Span::raw(format!("{:.10}", market.price_btc)),
+                Span::raw(format!("{:.10}", market.btc)),
             ]),
             Line::from(vec![
                 Span::styled(" Market Cap:    ", Style::default().fg(Color::DarkGray)),
-                Span::raw(format_usd(market.market_cap)),
+                Span::raw(format_usd(market.usd_market_cap)),
             ]),
             Line::from(vec![
                 Span::styled(" 24h Volume:    ", Style::default().fg(Color::DarkGray)),
-                Span::raw(format_usd(market.volume_24h)),
+                Span::raw(format_usd(market.usd_24h_vol)),
             ]),
         ]
     } else {

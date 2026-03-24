@@ -1,0 +1,14 @@
+[package]
+name = "tui4kas-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+kaspa-rpc-core.workspace = true
+kaspa-wrpc-client.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
