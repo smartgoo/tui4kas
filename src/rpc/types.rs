@@ -4,12 +4,10 @@ use kaspa_rpc_core::{
 };
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ServerInfo {
     pub server_version: String,
     pub network_id: String,
     pub is_synced: bool,
-    pub virtual_daa_score: u64,
     pub has_utxo_index: bool,
 }
 
@@ -19,7 +17,6 @@ impl From<GetServerInfoResponse> for ServerInfo {
             server_version: r.server_version,
             network_id: r.network_id.to_string(),
             is_synced: r.is_synced,
-            virtual_daa_score: r.virtual_daa_score,
             has_utxo_index: r.has_utxo_index,
         }
     }
@@ -27,13 +24,11 @@ impl From<GetServerInfoResponse> for ServerInfo {
 
 #[derive(Debug, Clone)]
 pub struct DagInfo {
-    pub network: String,
     pub block_count: u64,
     pub header_count: u64,
     pub tip_hashes: Vec<String>,
     pub difficulty: f64,
     pub past_median_time: u64,
-    pub virtual_parent_hashes: Vec<String>,
     pub pruning_point_hash: String,
     pub virtual_daa_score: u64,
     pub sink: String,
@@ -42,17 +37,11 @@ pub struct DagInfo {
 impl From<GetBlockDagInfoResponse> for DagInfo {
     fn from(r: GetBlockDagInfoResponse) -> Self {
         Self {
-            network: r.network.to_string(),
             block_count: r.block_count,
             header_count: r.header_count,
             tip_hashes: r.tip_hashes.iter().map(|h| h.to_string()).collect(),
             difficulty: r.difficulty,
             past_median_time: r.past_median_time,
-            virtual_parent_hashes: r
-                .virtual_parent_hashes
-                .iter()
-                .map(|h| h.to_string())
-                .collect(),
             pruning_point_hash: r.pruning_point_hash.to_string(),
             virtual_daa_score: r.virtual_daa_score,
             sink: r.sink.to_string(),
@@ -159,18 +148,6 @@ pub fn format_number(n: u64) -> String {
     result.chars().rev().collect()
 }
 
-#[allow(dead_code)]
-pub fn shorten_address(addr: &str, prefix_len: usize, suffix_len: usize) -> String {
-    let char_count = addr.chars().count();
-    if char_count > prefix_len + suffix_len + 3 {
-        let prefix: String = addr.chars().take(prefix_len).collect();
-        let suffix: String = addr.chars().skip(char_count - suffix_len).collect();
-        format!("{}...{}", prefix, suffix)
-    } else {
-        addr.to_string()
-    }
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct MiningInfo {
     pub hashrate: f64,
@@ -179,10 +156,6 @@ pub struct MiningInfo {
     pub blocks_analyzed: usize,
     pub pools: Vec<(String, usize)>,
     pub node_versions: Vec<(String, usize)>,
-    pub total_mass: u64,
-    pub min_mass: u64,
-    pub max_mass: u64,
-    pub mass_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -343,7 +316,6 @@ mod tests {
         assert_eq!(info.server_version, "0.14.0");
         assert!(info.is_synced);
         assert!(info.has_utxo_index);
-        assert_eq!(info.virtual_daa_score, 12345);
         assert!(info.network_id.contains("mainnet"));
     }
 
@@ -372,8 +344,6 @@ mod tests {
         assert_eq!(info.tip_hashes.len(), 2);
         assert!((info.difficulty - 1234.56).abs() < f64::EPSILON);
         assert_eq!(info.past_median_time, 9999999);
-        assert_eq!(info.virtual_parent_hashes.len(), 1);
-        assert_eq!(info.virtual_daa_score, 5000);
     }
 
     // --- From<GetCoinSupplyResponse> ---
@@ -495,22 +465,6 @@ mod tests {
     #[test]
     fn format_number_millions() {
         assert_eq!(format_number(1_000_000), "1,000,000");
-    }
-
-    // --- shorten_address ---
-
-    #[test]
-    fn shorten_address_short() {
-        assert_eq!(shorten_address("abcdef", 10, 6), "abcdef");
-    }
-
-    #[test]
-    fn shorten_address_long() {
-        let addr = "kaspa:abcdefghijklmnopqrstuvwxyz0123456789";
-        let result = shorten_address(addr, 10, 6);
-        assert!(result.contains("..."));
-        assert!(result.starts_with("kaspa:abcd"));
-        assert!(result.ends_with("456789"));
     }
 
     // --- parse_coinbase_payload ---

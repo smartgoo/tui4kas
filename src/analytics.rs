@@ -120,13 +120,14 @@ pub struct BlockSummary {
     pub hash: String,
     pub timestamp_ms: u64,
     pub tx_count: usize,
+    pub total_mass: u64,
+    pub mass_count: usize,
     pub total_fees: u64,
-    pub min_fee: u64,
-    pub max_fee: u64,
     pub fee_count: usize,
     pub sender_counts: HashMap<String, usize>,
     pub receiver_counts: HashMap<String, usize>,
     pub protocol_counts: HashMap<TransactionProtocol, usize>,
+    pub protocol_mass: HashMap<TransactionProtocol, u64>,
     pub protocol_fees: HashMap<TransactionProtocol, u64>,
 }
 
@@ -134,13 +135,14 @@ pub struct BlockSummary {
 pub struct TimeBucket {
     pub bucket_start_ms: u64,
     pub tx_count: usize,
+    pub total_mass: u64,
+    pub mass_count: usize,
     pub total_fees: u64,
-    pub min_fee: u64,
-    pub max_fee: u64,
     pub fee_count: usize,
     pub sender_counts: HashMap<String, usize>,
     pub receiver_counts: HashMap<String, usize>,
     pub protocol_counts: HashMap<TransactionProtocol, usize>,
+    pub protocol_mass: HashMap<TransactionProtocol, u64>,
     pub protocol_fees: HashMap<TransactionProtocol, u64>,
 }
 
@@ -149,24 +151,23 @@ impl TimeBucket {
         Self {
             bucket_start_ms,
             tx_count: 0,
+            total_mass: 0,
+            mass_count: 0,
             total_fees: 0,
-            min_fee: u64::MAX,
-            max_fee: 0,
             fee_count: 0,
             sender_counts: HashMap::new(),
             receiver_counts: HashMap::new(),
             protocol_counts: HashMap::new(),
+            protocol_mass: HashMap::new(),
             protocol_fees: HashMap::new(),
         }
     }
 
     fn merge_block(&mut self, block: &BlockSummary) {
         self.tx_count += block.tx_count;
+        self.total_mass += block.total_mass;
+        self.mass_count += block.mass_count;
         self.total_fees += block.total_fees;
-        if block.fee_count > 0 {
-            self.min_fee = self.min_fee.min(block.min_fee);
-            self.max_fee = self.max_fee.max(block.max_fee);
-        }
         self.fee_count += block.fee_count;
         for (addr, count) in &block.sender_counts {
             *self.sender_counts.entry(addr.clone()).or_insert(0) += count;
@@ -176,6 +177,9 @@ impl TimeBucket {
         }
         for (proto, count) in &block.protocol_counts {
             *self.protocol_counts.entry(*proto).or_insert(0) += count;
+        }
+        for (proto, mass) in &block.protocol_mass {
+            *self.protocol_mass.entry(*proto).or_insert(0) += mass;
         }
         for (proto, fees) in &block.protocol_fees {
             *self.protocol_fees.entry(*proto).or_insert(0) += fees;
@@ -357,19 +361,20 @@ impl AnalyticsEngine {
     fn aggregate_recent_blocks(&self) -> AggregatedView {
         let items = self.recent_blocks.values().map(|b| AggregateItem {
             tx_count: b.tx_count,
+            total_mass: b.total_mass,
+            mass_count: b.mass_count,
             total_fees: b.total_fees,
             fee_count: b.fee_count,
-            min_fee: b.min_fee,
-            max_fee: b.max_fee,
             sender_counts: &b.sender_counts,
             receiver_counts: &b.receiver_counts,
             protocol_counts: &b.protocol_counts,
+            protocol_mass: &b.protocol_mass,
             protocol_fees: &b.protocol_fees,
             timestamp_ms: b.timestamp_ms as f64,
         });
         let mut view = build_aggregated_view(items);
         // Sort time series by timestamp for recent blocks (may arrive unordered)
-        view.fee_over_time
+        view.mass_over_time
             .sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
         view.tx_over_time
             .sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -380,13 +385,14 @@ impl AnalyticsEngine {
         let skip = buckets.len().saturating_sub(n);
         let items = buckets.iter().skip(skip).map(|b| AggregateItem {
             tx_count: b.tx_count,
+            total_mass: b.total_mass,
+            mass_count: b.mass_count,
             total_fees: b.total_fees,
             fee_count: b.fee_count,
-            min_fee: b.min_fee,
-            max_fee: b.max_fee,
             sender_counts: &b.sender_counts,
             receiver_counts: &b.receiver_counts,
             protocol_counts: &b.protocol_counts,
+            protocol_mass: &b.protocol_mass,
             protocol_fees: &b.protocol_fees,
             timestamp_ms: b.bucket_start_ms as f64,
         });
@@ -396,13 +402,14 @@ impl AnalyticsEngine {
     fn aggregate_buckets(&self, buckets: &VecDeque<TimeBucket>) -> AggregatedView {
         let items = buckets.iter().map(|b| AggregateItem {
             tx_count: b.tx_count,
+            total_mass: b.total_mass,
+            mass_count: b.mass_count,
             total_fees: b.total_fees,
             fee_count: b.fee_count,
-            min_fee: b.min_fee,
-            max_fee: b.max_fee,
             sender_counts: &b.sender_counts,
             receiver_counts: &b.receiver_counts,
             protocol_counts: &b.protocol_counts,
+            protocol_mass: &b.protocol_mass,
             protocol_fees: &b.protocol_fees,
             timestamp_ms: b.bucket_start_ms as f64,
         });
@@ -429,13 +436,14 @@ impl AnalyticsEngine {
 
 struct AggregateItem<'a> {
     tx_count: usize,
+    total_mass: u64,
+    mass_count: usize,
     total_fees: u64,
     fee_count: usize,
-    min_fee: u64,
-    max_fee: u64,
     sender_counts: &'a HashMap<String, usize>,
     receiver_counts: &'a HashMap<String, usize>,
     protocol_counts: &'a HashMap<TransactionProtocol, usize>,
+    protocol_mass: &'a HashMap<TransactionProtocol, u64>,
     protocol_fees: &'a HashMap<TransactionProtocol, u64>,
     timestamp_ms: f64,
 }
@@ -445,17 +453,16 @@ fn build_aggregated_view<'a>(items: impl Iterator<Item = AggregateItem<'a>>) -> 
     let mut sender_totals: HashMap<String, usize> = HashMap::new();
     let mut receiver_totals: HashMap<String, usize> = HashMap::new();
     let mut protocol_totals: HashMap<TransactionProtocol, usize> = HashMap::new();
+    let mut protocol_mass_totals: HashMap<TransactionProtocol, u64> = HashMap::new();
     let mut protocol_fee_totals: HashMap<TransactionProtocol, u64> = HashMap::new();
 
     for item in items {
         view.blocks_analyzed += 1;
         view.tx_count += item.tx_count;
+        view.total_mass += item.total_mass;
+        view.mass_count += item.mass_count;
         view.total_fees += item.total_fees;
         view.fee_count += item.fee_count;
-        if item.fee_count > 0 {
-            view.min_fee = view.min_fee.min(item.min_fee);
-            view.max_fee = view.max_fee.max(item.max_fee);
-        }
         for (addr, count) in item.sender_counts {
             *sender_totals.entry(addr.clone()).or_insert(0) += count;
         }
@@ -465,22 +472,37 @@ fn build_aggregated_view<'a>(items: impl Iterator<Item = AggregateItem<'a>>) -> 
         for (proto, count) in item.protocol_counts {
             *protocol_totals.entry(*proto).or_insert(0) += count;
         }
+        for (proto, mass) in item.protocol_mass {
+            *protocol_mass_totals.entry(*proto).or_insert(0) += mass;
+        }
         for (proto, fees) in item.protocol_fees {
             *protocol_fee_totals.entry(*proto).or_insert(0) += fees;
         }
 
-        let avg = if item.fee_count > 0 {
-            item.total_fees as f64 / item.fee_count as f64
+        let avg = if item.mass_count > 0 {
+            item.total_mass as f64 / item.mass_count as f64
         } else {
             0.0
         };
-        view.fee_over_time.push((item.timestamp_ms, avg));
+        view.mass_over_time.push((item.timestamp_ms, avg));
         view.tx_over_time
             .push((item.timestamp_ms, item.tx_count as f64));
     }
 
+    view.avg_mass = if view.mass_count > 0 {
+        view.total_mass as f64 / view.mass_count as f64
+    } else {
+        0.0
+    };
+
     view.avg_fee = if view.fee_count > 0 {
         view.total_fees as f64 / view.fee_count as f64
+    } else {
+        0.0
+    };
+
+    view.avg_fee_per_gram = if view.total_mass > 0 {
+        view.total_fees as f64 / view.total_mass as f64
     } else {
         0.0
     };
@@ -489,6 +511,11 @@ fn build_aggregated_view<'a>(items: impl Iterator<Item = AggregateItem<'a>>) -> 
     view.top_receivers = top_n_sorted(receiver_totals, 20);
     view.protocol_counts = {
         let mut v: Vec<_> = protocol_totals.into_iter().collect();
+        v.sort_unstable_by_key(|b| std::cmp::Reverse(b.1));
+        v
+    };
+    view.protocol_mass = {
+        let mut v: Vec<_> = protocol_mass_totals.into_iter().collect();
         v.sort_unstable_by_key(|b| std::cmp::Reverse(b.1));
         v
     };
@@ -512,18 +539,21 @@ fn top_n_sorted(map: HashMap<String, usize>, n: usize) -> Vec<(String, usize)> {
 
 #[derive(Debug, Clone, Default)]
 pub struct AggregatedView {
-    pub avg_fee: f64,
+    pub avg_mass: f64,
+    pub total_mass: u64,
+    pub mass_count: usize,
     pub total_fees: u64,
-    pub min_fee: u64,
-    pub max_fee: u64,
     pub fee_count: usize,
+    pub avg_fee: f64,
+    pub avg_fee_per_gram: f64,
     pub tx_count: usize,
     pub blocks_analyzed: usize,
     pub top_senders: Vec<(String, usize)>,
     pub top_receivers: Vec<(String, usize)>,
     pub protocol_counts: Vec<(TransactionProtocol, usize)>,
+    pub protocol_mass: Vec<(TransactionProtocol, u64)>,
     pub protocol_fees: Vec<(TransactionProtocol, u64)>,
-    pub fee_over_time: Vec<(f64, f64)>,
+    pub mass_over_time: Vec<(f64, f64)>,
     pub tx_over_time: Vec<(f64, f64)>,
 }
 
@@ -533,18 +563,19 @@ pub struct AggregatedView {
 mod tests {
     use super::*;
 
-    fn make_block(hash: &str, timestamp_ms: u64, tx_count: usize, fee: u64) -> BlockSummary {
+    fn make_block(hash: &str, timestamp_ms: u64, tx_count: usize, mass: u64) -> BlockSummary {
         BlockSummary {
             hash: hash.to_string(),
             timestamp_ms,
             tx_count,
-            total_fees: fee,
-            min_fee: fee,
-            max_fee: fee,
-            fee_count: if fee > 0 { tx_count } else { 0 },
+            total_mass: mass,
+            mass_count: if mass > 0 { tx_count } else { 0 },
+            total_fees: mass / 2, // rough test value
+            fee_count: tx_count,
             sender_counts: HashMap::from([("sender1".to_string(), tx_count)]),
             receiver_counts: HashMap::from([("receiver1".to_string(), tx_count)]),
             protocol_counts: HashMap::new(),
+            protocol_mass: HashMap::new(),
             protocol_fees: HashMap::new(),
         }
     }
@@ -558,14 +589,15 @@ mod tests {
             hash: hash.to_string(),
             timestamp_ms,
             tx_count: 1,
-            total_fees: 100,
-            min_fee: 100,
-            max_fee: 100,
+            total_mass: 100,
+            mass_count: 1,
+            total_fees: 50,
             fee_count: 1,
             sender_counts: HashMap::new(),
             receiver_counts: HashMap::new(),
             protocol_counts: HashMap::from([(proto, 1)]),
-            protocol_fees: HashMap::from([(proto, 100)]),
+            protocol_mass: HashMap::from([(proto, 100)]),
+            protocol_fees: HashMap::from([(proto, 50)]),
         }
     }
 
@@ -736,7 +768,7 @@ mod tests {
 
         let view = engine.get_view(TimeWindow::OneMin);
         assert_eq!(view.tx_count, 8);
-        assert_eq!(view.total_fees, 300);
+        assert_eq!(view.total_mass, 300);
         assert_eq!(view.blocks_analyzed, 2);
         assert!(!view.top_senders.is_empty());
         assert!(!view.top_receivers.is_empty());
@@ -747,15 +779,13 @@ mod tests {
         let mut engine = AnalyticsEngine::new();
         let mut bucket = TimeBucket::new(60_000);
         bucket.tx_count = 10;
-        bucket.total_fees = 500;
-        bucket.fee_count = 10;
-        bucket.min_fee = 10;
-        bucket.max_fee = 100;
+        bucket.total_mass = 500;
+        bucket.mass_count = 10;
         engine.minute_buckets.push_back(bucket);
 
         let view = engine.get_view(TimeWindow::OneHour);
         assert_eq!(view.tx_count, 10);
-        assert_eq!(view.total_fees, 500);
+        assert_eq!(view.total_mass, 500);
     }
 
     #[test]
@@ -833,18 +863,14 @@ mod tests {
         bucket.merge_block(&block);
 
         assert_eq!(bucket.tx_count, 5);
-        assert_eq!(bucket.total_fees, 50);
-        assert_eq!(bucket.min_fee, 50);
-        assert_eq!(bucket.max_fee, 50);
-        assert_eq!(bucket.fee_count, 5);
+        assert_eq!(bucket.total_mass, 50);
+        assert_eq!(bucket.mass_count, 5);
 
         let block2 = make_block("b2", 200, 3, 100);
         bucket.merge_block(&block2);
 
         assert_eq!(bucket.tx_count, 8);
-        assert_eq!(bucket.total_fees, 150);
-        assert_eq!(bucket.min_fee, 50);
-        assert_eq!(bucket.max_fee, 100);
+        assert_eq!(bucket.total_mass, 150);
     }
 
     #[test]

@@ -1,5 +1,4 @@
 mod analytics;
-mod blockdag;
 mod command;
 pub(crate) mod common;
 mod dashboard;
@@ -39,7 +38,6 @@ pub fn draw(frame: &mut Frame, app: &App) {
             Tab::Dashboard => dashboard::render(frame, chunks[1], app),
             Tab::Mining => mining::render(frame, chunks[1], app),
             Tab::Mempool => mempool::render(frame, chunks[1], app),
-            Tab::BlockDag => blockdag::render(frame, chunks[1], app),
             Tab::Analytics => analytics::render(frame, chunks[1], app),
             Tab::RpcExplorer => rpc_explorer::render(frame, chunks[1], app),
             Tab::Settings => settings::render(frame, chunks[1], app),

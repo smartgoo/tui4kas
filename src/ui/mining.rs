@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::app::{App, MiningPanel};
-use crate::rpc::types::{MiningInfo, format_hashrate, format_number};
+use crate::rpc::types::format_hashrate;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     if !app.has_direct_url() {
@@ -55,6 +55,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     // --- Summary bar ---
     let hashrate_str = format_hashrate(mining.hashrate);
+    let block_count_label = format!(
+        "{}  (b: {})",
+        mining.blocks_analyzed, app.mining_tab.block_count
+    );
     let summary_lines = vec![Line::from(vec![
         Span::styled(" Hashrate: ", Style::default().fg(Color::DarkGray)),
         Span::raw(&hashrate_str),
@@ -64,7 +68,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             "    Blocks Analyzed: ",
             Style::default().fg(Color::DarkGray),
         ),
-        Span::raw(format!("{}", mining.blocks_analyzed)),
+        Span::raw(&block_count_label),
     ])];
     let summary_block = Block::default().borders(Borders::ALL).title(Span::styled(
         " Mining Summary ",
@@ -74,7 +78,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     ));
     frame.render_widget(Paragraph::new(summary_lines).block(summary_block), rows[0]);
 
-    // --- Middle: Miners (left) + Pools (right) ---
+    // --- Middle: Node Versions (left) + Mining Pools (right) ---
     let middle = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -83,12 +87,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     render_table_panel(
         frame,
         middle[0],
-        "Miners",
-        &["Address", "Blocks", "Share"],
-        &mining.all_miners,
+        "Node Versions",
+        &["Version", "Blocks", "Share"],
+        &mining.node_versions,
         mining.blocks_analyzed,
-        app.mining_tab.active_panel == MiningPanel::Miners,
-        app.mining_tab.miners_selected,
+        app.mining_tab.active_panel == MiningPanel::Versions,
+        app.mining_tab.versions_selected,
     );
 
     render_table_panel(
@@ -102,24 +106,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         app.mining_tab.pools_selected,
     );
 
-    // --- Bottom: Node Versions (left) + Mass Info (right) ---
-    let bottom = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(rows[2]);
-
+    // --- Bottom: Miners (full width) ---
     render_table_panel(
         frame,
-        bottom[0],
-        "Node Versions",
-        &["Version", "Blocks", "Share"],
-        &mining.node_versions,
+        rows[2],
+        "Miners",
+        &["Address", "Blocks", "Share"],
+        &mining.all_miners,
         mining.blocks_analyzed,
-        app.mining_tab.active_panel == MiningPanel::Versions,
-        app.mining_tab.versions_selected,
+        app.mining_tab.active_panel == MiningPanel::Miners,
+        app.mining_tab.miners_selected,
     );
-
-    render_fee_panel(frame, bottom[1], mining);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -134,7 +131,9 @@ fn render_table_panel(
     selected: usize,
 ) {
     let border_style = if is_active {
-        Style::default().fg(Color::Cyan)
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::DarkGray)
     };
@@ -223,70 +222,4 @@ fn render_table_panel(
     }
 
     frame.render_widget(Paragraph::new(lines), inner);
-}
-
-fn render_fee_panel(frame: &mut Frame, area: Rect, mining: &MiningInfo) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .title(Span::styled(
-            " Mass Info ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
-
-    let avg_mass = if mining.mass_count > 0 {
-        mining.total_mass as f64 / mining.mass_count as f64
-    } else {
-        0.0
-    };
-
-    let lines = vec![
-        Line::from(vec![
-            Span::styled(
-                " Avg Mass:           ",
-                Style::default().fg(Color::DarkGray),
-            ),
-            Span::raw(format!("{:.2}", avg_mass)),
-        ]),
-        Line::from(vec![
-            Span::styled(
-                " Min Mass:           ",
-                Style::default().fg(Color::DarkGray),
-            ),
-            Span::raw(if mining.mass_count > 0 {
-                mining.min_mass.to_string()
-            } else {
-                "N/A".to_string()
-            }),
-        ]),
-        Line::from(vec![
-            Span::styled(
-                " Max Mass:           ",
-                Style::default().fg(Color::DarkGray),
-            ),
-            Span::raw(if mining.mass_count > 0 {
-                mining.max_mass.to_string()
-            } else {
-                "N/A".to_string()
-            }),
-        ]),
-        Line::from(vec![
-            Span::styled(
-                " Total Mass:         ",
-                Style::default().fg(Color::DarkGray),
-            ),
-            Span::raw(format_number(mining.total_mass)),
-        ]),
-        Line::from(vec![
-            Span::styled(
-                " Tx w/ Mass Data:    ",
-                Style::default().fg(Color::DarkGray),
-            ),
-            Span::raw(format_number(mining.mass_count as u64)),
-        ]),
-    ];
-
-    frame.render_widget(Paragraph::new(lines).block(block), area);
 }

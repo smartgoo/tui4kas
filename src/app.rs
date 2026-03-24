@@ -7,15 +7,9 @@ use crate::config::AppConfig;
 use crate::rpc::types::*;
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct DagSample {
     pub timestamp: Instant,
     pub blue_score: u64,
-    pub daa_score: u64,
-    pub block_count: u64,
-    pub header_count: u64,
-    pub tip_count: usize,
-    pub virtual_parent_count: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -25,16 +19,11 @@ pub struct DagStats {
 }
 
 impl DagStats {
-    pub fn update(&mut self, dag_info: &DagInfo, blue_score: Option<u64>) {
+    pub fn update(&mut self, blue_score: Option<u64>) {
         self.sink_blue_score = blue_score;
         self.samples.push_back(DagSample {
             timestamp: Instant::now(),
             blue_score: blue_score.unwrap_or(0),
-            daa_score: dag_info.virtual_daa_score,
-            block_count: dag_info.block_count,
-            header_count: dag_info.header_count,
-            tip_count: dag_info.tip_hashes.len(),
-            virtual_parent_count: dag_info.virtual_parent_hashes.len(),
         });
         while self.samples.len() > 120 {
             self.samples.pop_front();
@@ -55,14 +44,6 @@ impl DagStats {
         Some(delta / elapsed)
     }
 
-    pub fn avg_dag_width(&self) -> Option<f64> {
-        if self.samples.is_empty() {
-            return None;
-        }
-        let sum: usize = self.samples.iter().map(|s| s.tip_count).sum();
-        Some(sum as f64 / self.samples.len() as f64)
-    }
-
     pub fn block_interval_ms(&self) -> Option<f64> {
         if self.samples.len() < 2 {
             return None;
@@ -76,24 +57,6 @@ impl DagStats {
         let elapsed_ms = last.timestamp.duration_since(first.timestamp).as_secs_f64() * 1000.0;
         Some(elapsed_ms / delta as f64)
     }
-
-    pub fn blue_red_ratio(&self) -> Option<(usize, usize)> {
-        let last = self.samples.back()?;
-        let red = last.tip_count.saturating_sub(last.virtual_parent_count);
-        Some((last.virtual_parent_count, red))
-    }
-
-    pub fn headers_blocks_delta(&self) -> Option<u64> {
-        let last = self.samples.back()?;
-        Some(last.header_count.saturating_sub(last.block_count))
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum DagFocus {
-    #[default]
-    Tips,
-    Parents,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,7 +64,6 @@ pub enum Tab {
     Dashboard,
     Mining,
     Mempool,
-    BlockDag,
     Analytics,
     RpcExplorer,
     Settings,
@@ -113,7 +75,6 @@ impl Tab {
             Tab::Dashboard,
             Tab::Mining,
             Tab::Mempool,
-            Tab::BlockDag,
             Tab::Analytics,
             Tab::RpcExplorer,
             Tab::Settings,
@@ -125,12 +86,61 @@ impl Tab {
             Tab::Dashboard => "1:Dashboard",
             Tab::Mining => "2:Mining",
             Tab::Mempool => "3:Mempool",
-            Tab::BlockDag => "4:BlockDAG",
-            Tab::Analytics => "5:Analytics",
-            Tab::RpcExplorer => "6:RPC Cmds",
-            Tab::Settings => "7:Settings",
+            Tab::Analytics => "4:Analytics",
+            Tab::RpcExplorer => "5:RPC Cmds",
+            Tab::Settings => "6:Settings",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DashboardPanel {
+    #[default]
+    NodeInfo,
+    NetworkStats,
+    Markets,
+    MempoolFees,
+}
+
+impl DashboardPanel {
+    pub fn move_left(self) -> Self {
+        match self {
+            Self::NetworkStats => Self::NodeInfo,
+            Self::MempoolFees => Self::Markets,
+            other => other,
+        }
+    }
+
+    pub fn move_right(self) -> Self {
+        match self {
+            Self::NodeInfo => Self::NetworkStats,
+            Self::Markets => Self::MempoolFees,
+            other => other,
+        }
+    }
+
+    pub fn move_up(self) -> Self {
+        match self {
+            Self::Markets => Self::NodeInfo,
+            Self::MempoolFees => Self::NetworkStats,
+            other => other,
+        }
+    }
+
+    pub fn move_down(self) -> Self {
+        match self {
+            Self::NodeInfo => Self::Markets,
+            Self::NetworkStats => Self::MempoolFees,
+            other => other,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RpcExplorerPanel {
+    #[default]
+    Methods,
+    Response,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -144,27 +154,39 @@ pub enum MiningPanel {
 impl MiningPanel {
     pub fn next(self) -> Self {
         match self {
-            MiningPanel::Miners => MiningPanel::Pools,
-            MiningPanel::Pools => MiningPanel::Versions,
-            MiningPanel::Versions => MiningPanel::Miners,
+            MiningPanel::Versions => MiningPanel::Pools,
+            MiningPanel::Pools => MiningPanel::Miners,
+            MiningPanel::Miners => MiningPanel::Versions,
         }
     }
 
     pub fn prev(self) -> Self {
         match self {
-            MiningPanel::Miners => MiningPanel::Versions,
-            MiningPanel::Pools => MiningPanel::Miners,
-            MiningPanel::Versions => MiningPanel::Pools,
+            MiningPanel::Versions => MiningPanel::Miners,
+            MiningPanel::Pools => MiningPanel::Versions,
+            MiningPanel::Miners => MiningPanel::Pools,
         }
     }
 }
 
-#[derive(Default)]
 pub struct MiningTabState {
     pub active_panel: MiningPanel,
     pub miners_selected: usize,
     pub pools_selected: usize,
     pub versions_selected: usize,
+    pub block_count: usize,
+}
+
+impl Default for MiningTabState {
+    fn default() -> Self {
+        Self {
+            active_panel: MiningPanel::default(),
+            miners_selected: 0,
+            pools_selected: 0,
+            versions_selected: 0,
+            block_count: 1000,
+        }
+    }
 }
 
 impl MiningTabState {
@@ -174,6 +196,14 @@ impl MiningTabState {
             MiningPanel::Pools => &mut self.pools_selected,
             MiningPanel::Versions => &mut self.versions_selected,
         }
+    }
+
+    pub fn cycle_block_count(&mut self) {
+        self.block_count = match self.block_count {
+            100 => 1000,
+            1000 => 10000,
+            _ => 100,
+        };
     }
 }
 
@@ -190,13 +220,6 @@ impl ViewMode {
             Self::Table => Self::Chart,
             Self::Chart => Self::Table,
         };
-    }
-
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::Table => "Table",
-            Self::Chart => "Chart",
-        }
     }
 }
 
@@ -223,6 +246,18 @@ impl TimeWindow {
             Self::TwelveHour => Self::TwentyFourHour,
             Self::TwentyFourHour => Self::OneMin,
         };
+    }
+
+    pub fn seconds(&self) -> f64 {
+        match self {
+            Self::OneMin => 60.0,
+            Self::FifteenMin => 900.0,
+            Self::ThirtyMin => 1800.0,
+            Self::OneHour => 3600.0,
+            Self::SixHour => 21600.0,
+            Self::TwelveHour => 43200.0,
+            Self::TwentyFourHour => 86400.0,
+        }
     }
 
     pub fn label(&self) -> &'static str {
@@ -463,9 +498,7 @@ pub struct NodeState {
     pub node_url: Option<String>,
     pub node_uid: Option<String>,
     pub connection_status: ConnectionStatus,
-    pub last_refresh: Option<Instant>,
     pub last_poll_duration_ms: Option<f64>,
-    pub last_error: Option<String>,
 }
 
 impl Default for NodeState {
@@ -482,9 +515,7 @@ impl Default for NodeState {
             node_url: None,
             node_uid: None,
             connection_status: ConnectionStatus::Disconnected,
-            last_refresh: None,
             last_poll_duration_ms: None,
-            last_error: None,
         }
     }
 }
@@ -510,22 +541,12 @@ pub struct AnalyticsState {
     pub cached_views: Option<[AggregatedView; ANALYTICS_PANEL_COUNT]>,
 }
 
-#[derive(Default)]
-pub struct DagSelection {
-    pub focus: DagFocus,
-    pub tip_selected: usize,
-    pub parent_selected: usize,
-    pub block_detail: Option<String>,
-    pub block_loading: bool,
-}
-
 pub struct App {
     pub active_tab: Tab,
     pub should_quit: bool,
 
     pub node: NodeState,
     pub analytics: AnalyticsState,
-    pub dag_selection: DagSelection,
     pub market_data: Option<MarketData>,
 
     pub rpc_explorer: RpcExplorerState,
@@ -539,6 +560,8 @@ pub struct App {
     pub quit_confirm: bool,
     pub dirty: bool,
 
+    pub dashboard_panel: DashboardPanel,
+    pub rpc_explorer_panel: RpcExplorerPanel,
     pub mining_tab: MiningTabState,
     pub settings: SettingsState,
 
@@ -553,12 +576,13 @@ impl App {
             should_quit: false,
             node: NodeState::default(),
             analytics: AnalyticsState::default(),
-            dag_selection: DagSelection::default(),
             market_data: None,
             rpc_explorer: RpcExplorerState::default(),
             command_line: CommandLine::default(),
             mempool_selected: 0,
             mempool_detail: None,
+            dashboard_panel: DashboardPanel::default(),
+            rpc_explorer_panel: RpcExplorerPanel::default(),
             paused: false,
             show_help: false,
             quit_confirm: false,
@@ -608,10 +632,9 @@ mod tests {
         assert_eq!(Tab::Dashboard.title(), "1:Dashboard");
         assert_eq!(Tab::Mining.title(), "2:Mining");
         assert_eq!(Tab::Mempool.title(), "3:Mempool");
-        assert_eq!(Tab::BlockDag.title(), "4:BlockDAG");
-        assert_eq!(Tab::Analytics.title(), "5:Analytics");
-        assert_eq!(Tab::RpcExplorer.title(), "6:RPC Cmds");
-        assert_eq!(Tab::Settings.title(), "7:Settings");
+        assert_eq!(Tab::Analytics.title(), "4:Analytics");
+        assert_eq!(Tab::RpcExplorer.title(), "5:RPC Cmds");
+        assert_eq!(Tab::Settings.title(), "6:Settings");
     }
 
     #[test]
@@ -631,8 +654,6 @@ mod tests {
         assert_eq!(app.active_tab, Tab::Mining);
         app.next_tab();
         assert_eq!(app.active_tab, Tab::Mempool);
-        app.next_tab();
-        assert_eq!(app.active_tab, Tab::BlockDag);
         app.next_tab();
         assert_eq!(app.active_tab, Tab::Analytics);
         app.next_tab();
@@ -658,7 +679,7 @@ mod tests {
         // Navigate back a couple
         app.active_tab = Tab::Analytics;
         app.prev_tab();
-        assert_eq!(app.active_tab, Tab::BlockDag);
+        assert_eq!(app.active_tab, Tab::Mempool);
     }
 
     // --- CommandLine: editing ---
@@ -970,38 +991,19 @@ mod tests {
 
     // --- DagStats ---
 
-    fn make_dag_info(tips: usize, parents: usize, blocks: u64, headers: u64) -> DagInfo {
-        DagInfo {
-            network: "mainnet".to_string(),
-            block_count: blocks,
-            header_count: headers,
-            tip_hashes: (0..tips).map(|i| format!("tip{}", i)).collect(),
-            difficulty: 1.0,
-            past_median_time: 0,
-            virtual_parent_hashes: (0..parents).map(|i| format!("tip{}", i)).collect(),
-            pruning_point_hash: "pruning".to_string(),
-            virtual_daa_score: 1000,
-            sink: "sink".to_string(),
-        }
-    }
-
     #[test]
     fn dag_stats_default_empty() {
         let stats = DagStats::default();
         assert!(stats.samples.is_empty());
         assert!(stats.sink_blue_score.is_none());
         assert!(stats.blue_block_rate().is_none());
-        assert!(stats.avg_dag_width().is_none());
         assert!(stats.block_interval_ms().is_none());
-        assert!(stats.blue_red_ratio().is_none());
-        assert!(stats.headers_blocks_delta().is_none());
     }
 
     #[test]
     fn dag_stats_update_adds_sample() {
         let mut stats = DagStats::default();
-        let dag = make_dag_info(4, 3, 1000, 1010);
-        stats.update(&dag, Some(500));
+        stats.update(Some(500));
         assert_eq!(stats.samples.len(), 1);
         assert_eq!(stats.sink_blue_score, Some(500));
     }
@@ -1009,48 +1011,16 @@ mod tests {
     #[test]
     fn dag_stats_caps_at_120() {
         let mut stats = DagStats::default();
-        let dag = make_dag_info(4, 3, 1000, 1010);
         for _ in 0..130 {
-            stats.update(&dag, Some(500));
+            stats.update(Some(500));
         }
         assert_eq!(stats.samples.len(), 120);
     }
 
     #[test]
-    fn dag_stats_blue_red_ratio() {
-        let mut stats = DagStats::default();
-        let dag = make_dag_info(5, 3, 1000, 1010);
-        stats.update(&dag, Some(500));
-        let (blue, red) = stats.blue_red_ratio().unwrap();
-        assert_eq!(blue, 3);
-        assert_eq!(red, 2);
-    }
-
-    #[test]
-    fn dag_stats_avg_dag_width() {
-        let mut stats = DagStats::default();
-        // 3 samples with tip counts 2, 4, 6 → avg 4.0
-        for tips in [2, 4, 6] {
-            let dag = make_dag_info(tips, 1, 1000, 1010);
-            stats.update(&dag, Some(100));
-        }
-        let avg = stats.avg_dag_width().unwrap();
-        assert!((avg - 4.0).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn dag_stats_headers_blocks_delta() {
-        let mut stats = DagStats::default();
-        let dag = make_dag_info(4, 3, 1000, 1050);
-        stats.update(&dag, Some(500));
-        assert_eq!(stats.headers_blocks_delta(), Some(50));
-    }
-
-    #[test]
     fn dag_stats_blue_block_rate_needs_two_samples() {
         let mut stats = DagStats::default();
-        let dag = make_dag_info(4, 3, 1000, 1010);
-        stats.update(&dag, Some(500));
+        stats.update(Some(500));
         assert!(stats.blue_block_rate().is_none());
     }
 

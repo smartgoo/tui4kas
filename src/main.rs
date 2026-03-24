@@ -210,7 +210,7 @@ async fn main() -> Result<()> {
                     app_guard.dirty = true;
                 }
             }
-            AppEvent::Resize(_, _) => {
+            AppEvent::Resize => {
                 app.write().await.dirty = true;
             }
         }

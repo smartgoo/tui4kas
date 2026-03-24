@@ -18,7 +18,7 @@ pub fn render_help(frame: &mut Frame, area: Rect, app: &App) {
     let key_style = Style::default()
         .fg(Color::Cyan)
         .add_modifier(Modifier::BOLD);
-    let desc_style = Style::default().fg(Color::White);
+    let desc_style = Style::default();
     let section_style = Style::default()
         .fg(Color::Yellow)
         .add_modifier(Modifier::BOLD);
@@ -28,7 +28,7 @@ pub fn render_help(frame: &mut Frame, area: Rect, app: &App) {
     // Global keys
     lines.push(Line::from(Span::styled("Global", section_style)));
     let global_keys = [
-        ("1-7", "Switch to tab"),
+        ("1-6", "Switch to tab"),
         ("Tab/Shift+Tab", "Next/previous tab"),
         (":", "Open command line"),
         ("p", "Pause/resume polling"),
@@ -49,7 +49,7 @@ pub fn render_help(frame: &mut Frame, area: Rect, app: &App) {
 
     // Tab-specific keys
     let (section_name, tab_keys): (&str, Vec<(&str, &str)>) = match app.active_tab {
-        Tab::Dashboard => ("Dashboard", vec![("(no extra keys)", "Read-only display")]),
+        Tab::Dashboard => ("Dashboard", vec![("h/j/k/l or Arrows", "Navigate panels")]),
         Tab::Mining => (
             "Mining",
             vec![
@@ -57,6 +57,7 @@ pub fn render_help(frame: &mut Frame, area: Rect, app: &App) {
                 ("j/k or Up/Down", "Scroll list"),
                 ("g/G or Home/End", "Jump to first/last"),
                 ("o", "Open address in browser"),
+                ("b", "Cycle block count (100/1k/10k)"),
             ],
         ),
         Tab::Mempool => (
@@ -67,17 +68,6 @@ pub fn render_help(frame: &mut Frame, area: Rect, app: &App) {
                 ("Enter", "Show transaction detail"),
                 ("o", "Open transaction in browser"),
                 ("Esc", "Close detail popup"),
-            ],
-        ),
-        Tab::BlockDag => (
-            "BlockDAG",
-            vec![
-                ("h/l or Left/Right", "Switch tips/parents focus"),
-                ("j/k or Up/Down", "Select item"),
-                ("g/G or Home/End", "Jump to first/last"),
-                ("Enter", "Show block info"),
-                ("o", "Open block in browser"),
-                ("Esc", "Close block popup"),
             ],
         ),
         Tab::Analytics => (
@@ -92,9 +82,9 @@ pub fn render_help(frame: &mut Frame, area: Rect, app: &App) {
         Tab::RpcExplorer => (
             "RPC Explorer",
             vec![
-                ("Up/Down", "Select RPC method"),
+                ("h/l or Left/Right", "Switch panel"),
+                ("j/k or Up/Down", "Navigate in active panel"),
                 ("Enter", "Execute method"),
-                ("j/k", "Scroll response"),
                 ("J/K", "Scroll fast (10 lines)"),
                 ("PgUp/PgDn", "Scroll page (20 lines)"),
                 ("g/G or Home/End", "Jump to top/bottom"),

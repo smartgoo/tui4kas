@@ -16,16 +16,15 @@ fn context_hint(app: &App) -> String {
     }
 
     // Check for open popups
-    if app.mempool_detail.is_some() || app.dag_selection.block_detail.is_some() {
+    if app.mempool_detail.is_some() {
         return "Esc close popup | ? help".to_string();
     }
 
     match app.active_tab {
-        Tab::Dashboard => "Tab/1-7 switch | p pause | : command | ? help".to_string(),
+        Tab::Dashboard => "Tab/1-6 switch | p pause | : command | ? help".to_string(),
         Tab::Mining => "h/l panel | j/k scroll | g/G top/bottom | ? help".to_string(),
         Tab::Mempool => "j/k select | Enter detail | g/G top/bottom | ? help".to_string(),
-        Tab::BlockDag => "h/l focus | j/k select | Enter info | ? help".to_string(),
-        Tab::Analytics => "Tab/1-7 switch | p pause | : command | ? help".to_string(),
+        Tab::Analytics => "Tab/1-6 switch | p pause | : command | ? help".to_string(),
         Tab::RpcExplorer => "Up/Down method | Enter exec | j/k scroll | ? help".to_string(),
         Tab::Settings => {
             if app.settings.editing {

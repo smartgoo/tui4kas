@@ -48,10 +48,11 @@ pub fn start_mining_polling(
                 .as_ref()
                 .is_some_and(|s| s.is_synced);
             let is_paused = app_guard.paused;
+            let block_count = app_guard.mining_tab.block_count;
             drop(app_guard);
             if !is_paused
                 && is_synced
-                && let Ok(info) = rpc_for_mining.fetch_mining_info().await
+                && let Ok(info) = rpc_for_mining.fetch_mining_info(block_count).await
             {
                 let mut app = app_for_mining.write().await;
                 app.node.mining_info = Some(info);

@@ -139,9 +139,9 @@ impl RpcManager {
             Err(e) => errors.push(format!("sink_blue_score: {}", e)),
         }
 
-        if let Some(dag) = app.node.dag_info.clone() {
+        if app.node.dag_info.is_some() {
             let blue = app.node.sink_blue_score;
-            app.node.dag_stats.update(&dag, blue);
+            app.node.dag_stats.update(blue);
         }
 
         app.node.node_url = client.url();
@@ -150,13 +150,7 @@ impl RpcManager {
         }
 
         let poll_duration_ms = start.elapsed().as_secs_f64() * 1000.0;
-        app.node.last_refresh = Some(std::time::Instant::now());
         app.node.last_poll_duration_ms = Some(poll_duration_ms);
-        app.node.last_error = if errors.is_empty() {
-            None
-        } else {
-            Some(errors.join("; "))
-        };
         app.dirty = true;
     }
 
@@ -220,18 +214,18 @@ impl RpcManager {
                     .client
                     .estimate_network_hashes_per_second(1000, Some(dag.sink))
                     .await?;
-                Ok(format!("Estimated network hash rate: {} hashes/second", r))
+                Ok(format!(
+                    "estimate_network_hashes_per_second(\n  window_size: 1000,\n  start_hash: {:?}\n)\n\n{:#?}",
+                    dag.sink, r
+                ))
             }
             "get_headers" => {
                 let r = self.client.get_block_count().await?;
-                Ok(format!("Header count: {}", r.header_count))
+                Ok(format!("{:#?}", r))
             }
             "get_sync_status" => {
                 let r = self.client.get_server_info().await?;
-                Ok(format!(
-                    "Synced: {}\nVirtual DAA Score: {}\nServer Version: {}",
-                    r.is_synced, r.virtual_daa_score, r.server_version
-                ))
+                Ok(format!("{:#?}", r))
             }
             "get_virtual_chain" => {
                 let dag = self.client.get_block_dag_info().await?;
@@ -239,12 +233,7 @@ impl RpcManager {
                     .client
                     .get_virtual_chain_from_block(dag.pruning_point_hash, false, None)
                     .await?;
-                Ok(format!(
-                    "Removed chain blocks: {}\nAdded chain blocks: {}\nAccepted transaction IDs: {}",
-                    r.removed_chain_block_hashes.len(),
-                    r.added_chain_block_hashes.len(),
-                    r.accepted_transaction_ids.len(),
-                ))
+                Ok(format!("{:#?}", r))
             }
             "ping" => {
                 let start = std::time::Instant::now();
@@ -259,7 +248,10 @@ impl RpcManager {
         }
     }
 
-    pub async fn fetch_mining_info(&self) -> Result<crate::rpc::types::MiningInfo> {
+    pub async fn fetch_mining_info(
+        &self,
+        block_count: usize,
+    ) -> Result<crate::rpc::types::MiningInfo> {
         use std::collections::HashMap;
 
         let dag = self.client.get_block_dag_info().await?;
@@ -278,7 +270,7 @@ impl RpcManager {
             .await?;
 
         // Sample the last N blocks from the chain
-        let sample_size = 100.min(vspc.added_chain_block_hashes.len());
+        let sample_size = block_count.min(vspc.added_chain_block_hashes.len());
         let start = vspc
             .added_chain_block_hashes
             .len()
@@ -288,10 +280,6 @@ impl RpcManager {
         let mut miner_counts: HashMap<String, usize> = HashMap::new();
         let mut pool_counts: HashMap<String, usize> = HashMap::new();
         let mut version_counts: HashMap<String, usize> = HashMap::new();
-        let mut total_mass: u64 = 0;
-        let mut min_mass: u64 = u64::MAX;
-        let mut max_mass: u64 = 0;
-        let mut mass_count: usize = 0;
 
         // Fetch blocks in parallel (10 concurrent)
         let hashes: Vec<_> = sample_hashes.to_vec();
@@ -326,23 +314,6 @@ impl RpcManager {
                     *version_counts.entry(version).or_insert(0) += 1;
                 }
             }
-
-            // Extract compute_mass from non-coinbase transactions
-            for tx in block.transactions.iter().skip(1) {
-                if let Some(ref verbose) = tx.verbose_data {
-                    let mass = verbose.compute_mass;
-                    if mass > 0 {
-                        total_mass += mass;
-                        mass_count += 1;
-                        min_mass = min_mass.min(mass);
-                        max_mass = max_mass.max(mass);
-                    }
-                }
-            }
-        }
-
-        if min_mass == u64::MAX {
-            min_mass = 0;
         }
 
         let unique_miners = miner_counts.len();
@@ -362,10 +333,6 @@ impl RpcManager {
             blocks_analyzed: sample_size,
             pools,
             node_versions,
-            total_mass,
-            min_mass,
-            max_mass,
-            mass_count,
         })
     }
 
@@ -405,6 +372,7 @@ impl RpcManager {
     }
 
     /// Extract BlockSummary entries and removed hashes from a VSPC V2 response.
+    /// Deduplicates transactions across blocks and excludes coinbase transactions.
     pub fn extract_block_summaries(
         response: &GetVirtualChainFromBlockV2Response,
     ) -> (Vec<BlockSummary>, Vec<String>) {
@@ -416,6 +384,9 @@ impl RpcManager {
 
         let mut summaries = Vec::new();
 
+        // Track seen transaction IDs across all blocks for deduplication
+        let mut seen_tx_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
         for chain_block in response.chain_block_accepted_transactions.iter() {
             let header = &chain_block.chain_block_header;
             let hash = header.hash.map(|h| h.to_string()).unwrap_or_default();
@@ -424,58 +395,100 @@ impl RpcManager {
             let _ = daa_score; // available for sync progress tracking
 
             let mut tx_count: usize = 0;
+            let mut total_mass: u64 = 0;
+            let mut mass_count: usize = 0;
             let mut total_fees: u64 = 0;
-            let mut min_fee: u64 = u64::MAX;
-            let mut max_fee: u64 = 0;
             let mut fee_count: usize = 0;
             let mut sender_counts: HashMap<String, usize> = HashMap::new();
             let mut receiver_counts: HashMap<String, usize> = HashMap::new();
             let mut protocol_counts: HashMap<crate::analytics::TransactionProtocol, usize> =
                 HashMap::new();
+            let mut protocol_mass: HashMap<crate::analytics::TransactionProtocol, u64> =
+                HashMap::new();
             let mut protocol_fees: HashMap<crate::analytics::TransactionProtocol, u64> =
                 HashMap::new();
 
-            for (i, tx) in chain_block.accepted_transactions.iter().enumerate() {
-                // Skip coinbase (first transaction)
-                if i == 0 {
+            for tx in chain_block.accepted_transactions.iter() {
+                // Exclude coinbase transactions via subnetwork_id
+                if tx.subnetwork_id.as_ref().is_some_and(|id| {
+                    id == &kaspa_rpc_core::RpcSubnetworkId::from_bytes([
+                        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    ])
+                }) {
                     continue;
                 }
+
+                // Deduplicate: skip if we've already processed this transaction
+                let tx_id = tx
+                    .verbose_data
+                    .as_ref()
+                    .and_then(|vd| vd.transaction_id)
+                    .map(|id| id.to_string())
+                    .unwrap_or_default();
+                if !tx_id.is_empty() && !seen_tx_ids.insert(tx_id) {
+                    continue;
+                }
+
                 tx_count += 1;
 
-                // Extract fee from compute_mass (High verbosity)
-                let tx_fee = if let Some(ref verbose) = tx.verbose_data
+                // Extract compute_mass (High verbosity)
+                let tx_mass = if let Some(ref verbose) = tx.verbose_data
                     && let Some(mass) = verbose.compute_mass
                     && mass > 0
                 {
-                    total_fees += mass;
-                    fee_count += 1;
-                    min_fee = min_fee.min(mass);
-                    max_fee = max_fee.max(mass);
+                    total_mass += mass;
+                    mass_count += 1;
                     mass
                 } else {
                     0
                 };
 
-                // Extract sender addresses from input UTXO verbose data
+                // Calculate fee: sum(input amounts) - sum(output amounts)
+                let input_sum: u64 = tx
+                    .inputs
+                    .iter()
+                    .filter_map(|inp| {
+                        inp.verbose_data
+                            .as_ref()
+                            .and_then(|vd| vd.utxo_entry.as_ref())
+                            .map(|utxo| utxo.amount.unwrap_or(0))
+                    })
+                    .sum();
+                let output_sum: u64 = tx.outputs.iter().map(|o| o.value.unwrap_or(0)).sum();
+                let tx_fee = input_sum.saturating_sub(output_sum);
+                if input_sum > 0 {
+                    total_fees += tx_fee;
+                    fee_count += 1;
+                }
+
+                // Track sender addresses per-transaction (not per-UTXO)
+                let mut tx_senders: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
                 for input in &tx.inputs {
                     if let Some(ref vd) = input.verbose_data
                         && let Some(ref utxo) = vd.utxo_entry
                         && let Some(ref uvd) = utxo.verbose_data
                         && let Some(ref addr) = uvd.script_public_key_address
                     {
-                        let addr = addr.to_string();
-                        *sender_counts.entry(addr).or_insert(0) += 1;
+                        tx_senders.insert(addr.to_string());
                     }
                 }
+                for addr in tx_senders {
+                    *sender_counts.entry(addr).or_insert(0) += 1;
+                }
 
-                // Extract receiver addresses from output verbose data
+                // Track receiver addresses per-transaction (not per-UTXO)
+                let mut tx_receivers: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
                 for output in &tx.outputs {
                     if let Some(ref vd) = output.verbose_data
                         && let Some(ref addr) = vd.script_public_key_address
                     {
-                        let addr = addr.to_string();
-                        *receiver_counts.entry(addr).or_insert(0) += 1;
+                        tx_receivers.insert(addr.to_string());
                     }
+                }
+                for addr in tx_receivers {
+                    *receiver_counts.entry(addr).or_insert(0) += 1;
                 }
 
                 // Protocol detection from payload and input scripts
@@ -487,39 +500,32 @@ impl RpcManager {
                     .collect();
                 if let Some(proto) = detect_protocol(payload, &input_scripts) {
                     *protocol_counts.entry(proto).or_insert(0) += 1;
-                    if tx_fee > 0 {
+                    if tx_mass > 0 {
+                        *protocol_mass.entry(proto).or_insert(0) += tx_mass;
+                    }
+                    if input_sum > 0 {
                         *protocol_fees.entry(proto).or_insert(0) += tx_fee;
                     }
                 }
-            }
-
-            if min_fee == u64::MAX {
-                min_fee = 0;
             }
 
             summaries.push(BlockSummary {
                 hash,
                 timestamp_ms,
                 tx_count,
+                total_mass,
+                mass_count,
                 total_fees,
-                min_fee,
-                max_fee,
                 fee_count,
                 sender_counts,
                 receiver_counts,
                 protocol_counts,
+                protocol_mass,
                 protocol_fees,
             });
         }
 
         (summaries, removed)
-    }
-
-    pub async fn get_block_by_hash(&self, hash_str: &str) -> Result<String> {
-        let hash = kaspa_rpc_core::RpcHash::from_str(hash_str)
-            .map_err(|e| anyhow::anyhow!("Invalid hash: {}", e))?;
-        let block = self.client.get_block(hash, true).await?;
-        Ok(format!("{:#?}", block))
     }
 }
 

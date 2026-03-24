@@ -6,7 +6,7 @@ use base64::Engine;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use tokio::sync::RwLock;
 
-use crate::app::{App, CommandLine, DagFocus, MiningPanel, SettingsState, Tab};
+use crate::app::{App, CommandLine, MiningPanel, RpcExplorerPanel, SettingsState, Tab};
 use crate::config::AppConfig;
 use crate::rpc::client::RpcManager;
 use crate::rpc::types::sompi_to_kas;
@@ -32,7 +32,6 @@ fn get_focused_text(app: &App) -> Option<String> {
             let entry = mempool.entries.get(app.mempool_selected)?;
             Some(entry.transaction_id.clone())
         }
-        Tab::BlockDag => get_selected_dag_hash(app),
         Tab::Mining => {
             let mining = app.node.mining_info.as_ref()?;
             let (data, selected) = match app.mining_tab.active_panel {
@@ -206,7 +205,6 @@ pub fn handle_normal_keys(
             // Dispatch Esc to tab-specific handlers for popup closing
             match app.active_tab {
                 Tab::Mempool => handle_mempool_keys(app, key.code),
-                Tab::BlockDag => handle_blockdag_keys(app, key.code, rpc, app_state),
                 Tab::Analytics => handle_analytics_keys(app, key.code),
                 _ => {}
             }
@@ -242,25 +240,21 @@ pub fn handle_normal_keys(
             app.active_tab = Tab::Mempool;
         }
         (KeyCode::Char('4'), _) => {
-            app.active_tab = Tab::BlockDag;
-        }
-        (KeyCode::Char('5'), _) => {
             app.active_tab = Tab::Analytics;
         }
-        (KeyCode::Char('6'), _) => {
+        (KeyCode::Char('5'), _) => {
             app.active_tab = Tab::RpcExplorer;
         }
-        (KeyCode::Char('7'), _) => {
+        (KeyCode::Char('6'), _) => {
             app.active_tab = Tab::Settings;
         }
         _ => match app.active_tab {
+            Tab::Dashboard => handle_dashboard_keys(app, key.code),
             Tab::Mining => handle_mining_keys(app, key.code),
             Tab::RpcExplorer => handle_rpc_explorer_keys(app, key.code, rpc, app_state),
             Tab::Mempool => handle_mempool_keys(app, key.code),
-            Tab::BlockDag => handle_blockdag_keys(app, key.code, rpc, app_state),
             Tab::Analytics => handle_analytics_keys(app, key.code),
             Tab::Settings => handle_settings_keys(app, key.code, settings_tx),
-            _ => {}
         },
     }
 
@@ -290,26 +284,6 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
                     app.mempool_selected += 1;
                 }
             }
-            Tab::BlockDag if app.dag_selection.block_detail.is_none() => {
-                if let Some(ref dag) = app.node.dag_info {
-                    match app.dag_selection.focus {
-                        DagFocus::Tips => {
-                            if app.dag_selection.tip_selected
-                                < dag.tip_hashes.len().saturating_sub(1)
-                            {
-                                app.dag_selection.tip_selected += 1;
-                            }
-                        }
-                        DagFocus::Parents => {
-                            if app.dag_selection.parent_selected
-                                < dag.virtual_parent_hashes.len().saturating_sub(1)
-                            {
-                                app.dag_selection.parent_selected += 1;
-                            }
-                        }
-                    }
-                }
-            }
             Tab::Mining => {
                 let max = mining_panel_len(app).saturating_sub(1);
                 let sel = app.mining_tab.selected_mut();
@@ -323,18 +297,6 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
         MouseEventKind::ScrollUp => match app.active_tab {
             Tab::Mempool if app.mempool_detail.is_none() => {
                 app.mempool_selected = app.mempool_selected.saturating_sub(1);
-            }
-            Tab::BlockDag if app.dag_selection.block_detail.is_none() => {
-                match app.dag_selection.focus {
-                    DagFocus::Tips => {
-                        app.dag_selection.tip_selected =
-                            app.dag_selection.tip_selected.saturating_sub(1);
-                    }
-                    DagFocus::Parents => {
-                        app.dag_selection.parent_selected =
-                            app.dag_selection.parent_selected.saturating_sub(1);
-                    }
-                }
             }
             Tab::Mining => {
                 let sel = app.mining_tab.selected_mut();
@@ -377,6 +339,24 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     false
 }
 
+pub fn handle_dashboard_keys(app: &mut App, key: KeyCode) {
+    match key {
+        KeyCode::Left | KeyCode::Char('h') => {
+            app.dashboard_panel = app.dashboard_panel.move_left();
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            app.dashboard_panel = app.dashboard_panel.move_right();
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.dashboard_panel = app.dashboard_panel.move_up();
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.dashboard_panel = app.dashboard_panel.move_down();
+        }
+        _ => {}
+    }
+}
+
 pub fn handle_mining_keys(app: &mut App, key: KeyCode) {
     match key {
         KeyCode::Left | KeyCode::Char('h') => {
@@ -401,6 +381,9 @@ pub fn handle_mining_keys(app: &mut App, key: KeyCode) {
         }
         KeyCode::End | KeyCode::Char('G') => {
             *app.mining_tab.selected_mut() = mining_panel_len(app).saturating_sub(1);
+        }
+        KeyCode::Char('b') => {
+            app.mining_tab.cycle_block_count();
         }
         KeyCode::Char('o') => {
             if let Some(ref mining) = app.node.mining_info {
@@ -446,19 +429,38 @@ pub fn handle_rpc_explorer_keys(
     }
 
     match key {
-        KeyCode::Up if app.rpc_explorer.selected_method > 0 => {
-            app.rpc_explorer.selected_method -= 1;
+        KeyCode::Left | KeyCode::Char('h') => {
+            app.rpc_explorer_panel = RpcExplorerPanel::Methods;
         }
-        KeyCode::Down => {
-            let len = app.rpc_explorer.available_methods.len();
-            if len > 0 && app.rpc_explorer.selected_method < len - 1 {
-                app.rpc_explorer.selected_method += 1;
+        KeyCode::Right | KeyCode::Char('l') => {
+            app.rpc_explorer_panel = RpcExplorerPanel::Response;
+        }
+        KeyCode::Up | KeyCode::Char('k') => match app.rpc_explorer_panel {
+            RpcExplorerPanel::Methods => {
+                if app.rpc_explorer.selected_method > 0 {
+                    app.rpc_explorer.selected_method -= 1;
+                }
             }
-        }
+            RpcExplorerPanel::Response => {
+                app.rpc_explorer.scroll_offset = app.rpc_explorer.scroll_offset.saturating_sub(1);
+            }
+        },
+        KeyCode::Down | KeyCode::Char('j') => match app.rpc_explorer_panel {
+            RpcExplorerPanel::Methods => {
+                let len = app.rpc_explorer.available_methods.len();
+                if len > 0 && app.rpc_explorer.selected_method < len - 1 {
+                    app.rpc_explorer.selected_method += 1;
+                }
+            }
+            RpcExplorerPanel::Response => {
+                app.rpc_explorer.scroll_offset = app.rpc_explorer.scroll_offset.saturating_add(1);
+            }
+        },
         KeyCode::Enter => {
             let method = app.rpc_explorer.available_methods[app.rpc_explorer.selected_method];
             app.rpc_explorer.is_loading = true;
             app.rpc_explorer.scroll_offset = 0;
+            app.rpc_explorer_panel = RpcExplorerPanel::Response;
 
             let method = method.to_string();
             let rpc = rpc.clone();
@@ -473,13 +475,11 @@ pub fn handle_rpc_explorer_keys(
                 app_guard.rpc_explorer.is_loading = false;
             });
         }
-        KeyCode::Char('j') | KeyCode::Char('J') => {
-            let step = if key == KeyCode::Char('J') { 10 } else { 1 };
-            app.rpc_explorer.scroll_offset = app.rpc_explorer.scroll_offset.saturating_add(step);
+        KeyCode::Char('J') => {
+            app.rpc_explorer.scroll_offset = app.rpc_explorer.scroll_offset.saturating_add(10);
         }
-        KeyCode::Char('k') | KeyCode::Char('K') => {
-            let step = if key == KeyCode::Char('K') { 10 } else { 1 };
-            app.rpc_explorer.scroll_offset = app.rpc_explorer.scroll_offset.saturating_sub(step);
+        KeyCode::Char('K') => {
+            app.rpc_explorer.scroll_offset = app.rpc_explorer.scroll_offset.saturating_sub(10);
         }
         KeyCode::PageDown => {
             app.rpc_explorer.scroll_offset = app.rpc_explorer.scroll_offset.saturating_add(20);
@@ -554,112 +554,6 @@ pub fn handle_mempool_keys(app: &mut App, key: KeyCode) {
     }
 }
 
-pub fn handle_blockdag_keys(
-    app: &mut App,
-    key: KeyCode,
-    rpc: &Arc<RpcManager>,
-    app_state: &Arc<RwLock<App>>,
-) {
-    if app.dag_selection.block_detail.is_some() {
-        if key == KeyCode::Esc {
-            app.dag_selection.block_detail = None;
-        }
-        return;
-    }
-
-    match key {
-        KeyCode::Left | KeyCode::Right | KeyCode::Char('h') | KeyCode::Char('l') => {
-            app.dag_selection.focus = match app.dag_selection.focus {
-                DagFocus::Tips => DagFocus::Parents,
-                DagFocus::Parents => DagFocus::Tips,
-            };
-        }
-        KeyCode::Up | KeyCode::Char('k') => match app.dag_selection.focus {
-            DagFocus::Tips => {
-                app.dag_selection.tip_selected = app.dag_selection.tip_selected.saturating_sub(1);
-            }
-            DagFocus::Parents => {
-                app.dag_selection.parent_selected =
-                    app.dag_selection.parent_selected.saturating_sub(1);
-            }
-        },
-        KeyCode::Down | KeyCode::Char('j') => {
-            if let Some(ref dag) = app.node.dag_info {
-                match app.dag_selection.focus {
-                    DagFocus::Tips => {
-                        if app.dag_selection.tip_selected < dag.tip_hashes.len().saturating_sub(1) {
-                            app.dag_selection.tip_selected += 1;
-                        }
-                    }
-                    DagFocus::Parents => {
-                        if app.dag_selection.parent_selected
-                            < dag.virtual_parent_hashes.len().saturating_sub(1)
-                        {
-                            app.dag_selection.parent_selected += 1;
-                        }
-                    }
-                }
-            }
-        }
-        KeyCode::Home | KeyCode::Char('g') => match app.dag_selection.focus {
-            DagFocus::Tips => {
-                app.dag_selection.tip_selected = 0;
-            }
-            DagFocus::Parents => {
-                app.dag_selection.parent_selected = 0;
-            }
-        },
-        KeyCode::End | KeyCode::Char('G') => {
-            if let Some(ref dag) = app.node.dag_info {
-                match app.dag_selection.focus {
-                    DagFocus::Tips => {
-                        app.dag_selection.tip_selected = dag.tip_hashes.len().saturating_sub(1);
-                    }
-                    DagFocus::Parents => {
-                        app.dag_selection.parent_selected =
-                            dag.virtual_parent_hashes.len().saturating_sub(1);
-                    }
-                }
-            }
-        }
-        KeyCode::Char('o') => {
-            if let Some(hash) = get_selected_dag_hash(app) {
-                let _ = open::that(format!("{}/block/{}", EXPLORER_BASE, hash));
-            }
-        }
-        KeyCode::Enter => {
-            let hash = get_selected_dag_hash(app);
-
-            if let Some(hash) = hash {
-                app.dag_selection.block_loading = true;
-                let rpc = rpc.clone();
-                let state = app_state.clone();
-                tokio::spawn(async move {
-                    let result = match rpc.get_block_by_hash(&hash).await {
-                        Ok(info) => info,
-                        Err(e) => format!("Error: {}", e),
-                    };
-                    let mut app_guard = state.write().await;
-                    app_guard.dag_selection.block_detail = Some(result);
-                    app_guard.dag_selection.block_loading = false;
-                });
-            }
-        }
-        _ => {}
-    }
-}
-
-fn get_selected_dag_hash(app: &App) -> Option<String> {
-    let dag = app.node.dag_info.as_ref()?;
-    match app.dag_selection.focus {
-        DagFocus::Tips => dag.tip_hashes.get(app.dag_selection.tip_selected).cloned(),
-        DagFocus::Parents => dag
-            .virtual_parent_hashes
-            .get(app.dag_selection.parent_selected)
-            .cloned(),
-    }
-}
-
 pub fn handle_analytics_keys(app: &mut App, key: KeyCode) {
     // Dismiss reorg notification on Esc
     if app.analytics.reorg_notification.is_some() && key == KeyCode::Esc {
@@ -669,31 +563,33 @@ pub fn handle_analytics_keys(app: &mut App, key: KeyCode) {
 
     match key {
         // Panel navigation
-        // Grid:  0  1  2
-        //        3     4
-        //        5  5  5
+        // Grid:  0  1
+        //        2  3
+        //        4  5
         KeyCode::Left | KeyCode::Char('h') => match app.analytics.focus {
             1 => app.analytics.focus = 0,
-            2 => app.analytics.focus = 1,
-            4 => app.analytics.focus = 3,
+            3 => app.analytics.focus = 2,
+            5 => app.analytics.focus = 4,
             _ => {}
         },
         KeyCode::Right | KeyCode::Char('l') => match app.analytics.focus {
             0 => app.analytics.focus = 1,
-            1 => app.analytics.focus = 2,
-            3 => app.analytics.focus = 4,
+            2 => app.analytics.focus = 3,
+            4 => app.analytics.focus = 5,
             _ => {}
         },
         KeyCode::Up | KeyCode::Char('k') => match app.analytics.focus {
-            3 => app.analytics.focus = 0,
+            2 => app.analytics.focus = 0,
+            3 => app.analytics.focus = 1,
             4 => app.analytics.focus = 2,
             5 => app.analytics.focus = 3,
             _ => {}
         },
         KeyCode::Down | KeyCode::Char('j') => match app.analytics.focus {
-            0 | 1 => app.analytics.focus = 3,
+            0 => app.analytics.focus = 2,
+            1 => app.analytics.focus = 3,
             2 => app.analytics.focus = 4,
-            3 | 4 => app.analytics.focus = 5,
+            3 => app.analytics.focus = 5,
             _ => {}
         },
         // Toggle view mode for focused panel

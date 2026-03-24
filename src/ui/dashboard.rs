@@ -4,7 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use crate::app::App;
+use crate::app::{App, DashboardPanel};
 use crate::rpc::types::{format_number, sompi_to_kas};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
@@ -23,13 +23,33 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(rows[1]);
 
-    render_node_info(frame, top[0], app);
-    render_network_stats(frame, top[1], app);
-    render_markets(frame, bottom[0], app);
-    render_mempool_summary(frame, bottom[1], app);
+    render_node_info(
+        frame,
+        top[0],
+        app,
+        app.dashboard_panel == DashboardPanel::NodeInfo,
+    );
+    render_network_stats(
+        frame,
+        top[1],
+        app,
+        app.dashboard_panel == DashboardPanel::NetworkStats,
+    );
+    render_markets(
+        frame,
+        bottom[0],
+        app,
+        app.dashboard_panel == DashboardPanel::Markets,
+    );
+    render_mempool_summary(
+        frame,
+        bottom[1],
+        app,
+        app.dashboard_panel == DashboardPanel::MempoolFees,
+    );
 }
 
-fn render_node_info(frame: &mut Frame, area: Rect, app: &App) {
+fn render_node_info(frame: &mut Frame, area: Rect, app: &App, is_active: bool) {
     let lines = if let Some(ref info) = app.node.server_info {
         let synced_style = if info.is_synced {
             Style::default().fg(Color::Green)
@@ -69,6 +89,17 @@ fn render_node_info(frame: &mut Frame, area: Rect, app: &App) {
             ]));
         }
 
+        if let Some(ref dag) = app.node.dag_info {
+            lines.push(Line::from(vec![
+                Span::styled(" Block Count: ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format_number(dag.block_count)),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" Header Count:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!(" {}", format_number(dag.header_count))),
+            ]));
+        }
+
         lines
     } else {
         vec![Line::from(Span::styled(
@@ -77,28 +108,30 @@ fn render_node_info(frame: &mut Frame, area: Rect, app: &App) {
         ))]
     };
 
-    let block = Block::default().borders(Borders::ALL).title(Span::styled(
-        " Node Info ",
+    let border_style = if is_active {
         Style::default()
             .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    ));
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .title(Span::styled(
+            " Node Info ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
 
     let paragraph = Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, area);
 }
 
-fn render_network_stats(frame: &mut Frame, area: Rect, app: &App) {
+fn render_network_stats(frame: &mut Frame, area: Rect, app: &App, is_active: bool) {
     let mut lines = if let Some(ref dag) = app.node.dag_info {
         vec![
-            Line::from(vec![
-                Span::styled(" Block Count:    ", Style::default().fg(Color::DarkGray)),
-                Span::raw(format_number(dag.block_count)),
-            ]),
-            Line::from(vec![
-                Span::styled(" Header Count:   ", Style::default().fg(Color::DarkGray)),
-                Span::raw(format_number(dag.header_count)),
-            ]),
             Line::from(vec![
                 Span::styled(" Difficulty:     ", Style::default().fg(Color::DarkGray)),
                 Span::raw(format!("{:.0}", dag.difficulty)),
@@ -110,6 +143,32 @@ fn render_network_stats(frame: &mut Frame, area: Rect, app: &App) {
             Line::from(vec![
                 Span::styled(" Tips:           ", Style::default().fg(Color::DarkGray)),
                 Span::raw(dag.tip_hashes.len().to_string()),
+            ]),
+            Line::from(vec![
+                Span::styled(" Block Interval: ", Style::default().fg(Color::DarkGray)),
+                Span::raw(match app.node.dag_stats.block_interval_ms() {
+                    Some(ms) => format!("{:.0}ms", ms),
+                    None => "---".into(),
+                }),
+            ]),
+            Line::from(vec![
+                Span::styled(" Block Rate:     ", Style::default().fg(Color::DarkGray)),
+                Span::raw(match app.node.dag_stats.blue_block_rate() {
+                    Some(rate) => format!("{:.2} blocks/s", rate),
+                    None => "---".into(),
+                }),
+            ]),
+            Line::from(vec![
+                Span::styled(" Median Time:    ", Style::default().fg(Color::DarkGray)),
+                Span::raw(dag.past_median_time.to_string()),
+            ]),
+            Line::from(vec![
+                Span::styled(" Pruning Point:  ", Style::default().fg(Color::DarkGray)),
+                Span::raw(&dag.pruning_point_hash),
+            ]),
+            Line::from(vec![
+                Span::styled(" Sink:           ", Style::default().fg(Color::DarkGray)),
+                Span::raw(&dag.sink),
             ]),
         ]
     } else {
@@ -143,17 +202,27 @@ fn render_network_stats(frame: &mut Frame, area: Rect, app: &App) {
         ]));
     }
 
-    let block = Block::default().borders(Borders::ALL).title(Span::styled(
-        " Network Stats ",
+    let border_style = if is_active {
         Style::default()
             .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    ));
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .title(Span::styled(
+            " Network Stats ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-fn render_markets(frame: &mut Frame, area: Rect, app: &App) {
+fn render_markets(frame: &mut Frame, area: Rect, app: &App, is_active: bool) {
     let lines = if let Some(ref market) = app.market_data {
         let change_color = if market.price_change_24h_pct >= 0.0 {
             Color::Green
@@ -196,12 +265,22 @@ fn render_markets(frame: &mut Frame, area: Rect, app: &App) {
         ))]
     };
 
-    let block = Block::default().borders(Borders::ALL).title(Span::styled(
-        " Markets ",
+    let border_style = if is_active {
         Style::default()
             .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    ));
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .title(Span::styled(
+            " Markets ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
@@ -218,7 +297,7 @@ fn format_usd(value: f64) -> String {
     }
 }
 
-fn render_mempool_summary(frame: &mut Frame, area: Rect, app: &App) {
+fn render_mempool_summary(frame: &mut Frame, area: Rect, app: &App, is_active: bool) {
     let mut lines = Vec::new();
 
     if let Some(ref mempool) = app.node.mempool_state {
@@ -257,12 +336,22 @@ fn render_mempool_summary(frame: &mut Frame, area: Rect, app: &App) {
         }
     }
 
-    let block = Block::default().borders(Borders::ALL).title(Span::styled(
-        " Mempool & Fees ",
+    let border_style = if is_active {
         Style::default()
             .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    ));
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .title(Span::styled(
+            " Mempool & Fees ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }

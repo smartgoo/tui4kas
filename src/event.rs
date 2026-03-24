@@ -2,12 +2,11 @@ use crossterm::event::{self, Event, KeyEvent, MouseEvent};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-#[allow(dead_code)]
 pub enum AppEvent {
     Tick,
     Key(KeyEvent),
     Mouse(MouseEvent),
-    Resize(u16, u16),
+    Resize,
 }
 
 pub struct EventHandler {
@@ -28,7 +27,7 @@ impl EventHandler {
                         Ok(Event::Mouse(mouse)) if tx.send(AppEvent::Mouse(mouse)).is_err() => {
                             return;
                         }
-                        Ok(Event::Resize(w, h)) if tx.send(AppEvent::Resize(w, h)).is_err() => {
+                        Ok(Event::Resize(_, _)) if tx.send(AppEvent::Resize).is_err() => {
                             return;
                         }
                         _ => {}

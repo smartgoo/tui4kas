@@ -7,7 +7,7 @@ use ratatui::widgets::{Axis, Bar, BarChart, BarGroup, Block, Borders, Chart, Dat
 
 use crate::analytics::AggregatedView;
 use crate::app::{App, TimeWindow, ViewMode};
-use crate::rpc::types::format_number;
+use crate::rpc::types::{format_number, sompi_to_kas};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     if !app.has_direct_url() {
@@ -88,7 +88,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .as_ref()
         .unwrap_or(&default_views);
 
-    // Layout: 3 rows — top 3 columns, mid 2 columns, bottom full-width bar chart
+    // Layout: 3 rows — top 2 columns, mid 2 columns, bottom 2 columns
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -100,11 +100,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     let top_cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(33),
-            Constraint::Percentage(34),
-            Constraint::Percentage(33),
-        ])
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(rows[0]);
 
     let mid_cols = Layout::default()
@@ -112,38 +108,44 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(rows[1]);
 
+    let bottom_cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(rows[2]);
+
     let panel_areas = [
         top_cols[0],
         top_cols[1],
-        top_cols[2],
         mid_cols[0],
         mid_cols[1],
-        rows[2],
+        bottom_cols[0],
+        bottom_cols[1],
     ];
 
     let panel_names = [
-        "Fee Analysis",
+        "Fees",
         "Tx Summary",
-        "Protocols",
         "Top Senders",
         "Top Receivers",
+        "Protocols",
         "Tx Counts",
     ];
 
     for (i, (&panel_area, name)) in panel_areas.iter().zip(panel_names.iter()).enumerate() {
         let is_focused = app.analytics.focus == i;
-        let border_color = if is_focused {
-            Color::Cyan
+        let border_style = if is_focused {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
         } else {
-            Color::White
+            Style::default().fg(Color::DarkGray)
         };
         let tw = app.analytics.time_windows[i].label();
-        let vm = app.analytics.view_modes[i].label();
-        let title = format!(" {} [{}] [{}] ", name, tw, vm);
+        let title = format!(" {} [{}] ", name, tw);
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(border_color))
+            .border_style(border_style)
             .title(Span::styled(
                 title,
                 Style::default()
@@ -166,16 +168,18 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         }
 
         match (i, app.analytics.view_modes[i]) {
-            (0, ViewMode::Table) => render_fee_table(frame, inner, &views[0]),
-            (0, ViewMode::Chart) => render_fee_chart(frame, inner, &views[0]),
-            (1, ViewMode::Table) => render_tx_table(frame, inner, &views[1]),
+            (0, ViewMode::Table) => render_fees_table(frame, inner, &views[0], app),
+            (0, ViewMode::Chart) => render_mass_chart(frame, inner, &views[0]),
+            (1, ViewMode::Table) => {
+                render_tx_table(frame, inner, &views[1], app.analytics.time_windows[1])
+            }
             (1, ViewMode::Chart) => render_tx_chart(frame, inner, &views[1]),
-            (2, ViewMode::Table) => render_protocol_table(frame, inner, &views[2]),
-            (2, ViewMode::Chart) => render_protocol_chart(frame, inner, &views[2]),
-            (3, ViewMode::Table) => render_address_table(frame, inner, &views[3], true),
-            (3, ViewMode::Chart) => render_address_chart(frame, inner, &views[3], "Senders"),
-            (4, ViewMode::Table) => render_address_table(frame, inner, &views[4], false),
-            (4, ViewMode::Chart) => render_address_chart(frame, inner, &views[4], "Receivers"),
+            (2, ViewMode::Table) => render_address_table(frame, inner, &views[2], true),
+            (2, ViewMode::Chart) => render_address_chart(frame, inner, &views[2], "Senders"),
+            (3, ViewMode::Table) => render_address_table(frame, inner, &views[3], false),
+            (3, ViewMode::Chart) => render_address_chart(frame, inner, &views[3], "Receivers"),
+            (4, ViewMode::Table) => render_protocol_table(frame, inner, &views[4]),
+            (4, ViewMode::Chart) => render_protocol_chart(frame, inner, &views[4]),
             (5, _) => render_tx_count_bars(frame, inner, &views[5], app.analytics.time_windows[5]),
             _ => {}
         }
@@ -184,55 +188,65 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
 // --- Table Renderers ---
 
-fn render_fee_table(frame: &mut Frame, area: Rect, view: &AggregatedView) {
-    let lines = vec![
+fn render_fees_table(frame: &mut Frame, area: Rect, view: &AggregatedView, app: &App) {
+    let mut lines = vec![
         Line::from(vec![
-            Span::styled(" Avg Fee (mass):  ", Style::default().fg(Color::DarkGray)),
-            Span::raw(format!("{:.2}", view.avg_fee)),
+            Span::styled(" Total Fees:    ", Style::default().fg(Color::DarkGray)),
+            Span::raw(format!("{:.8} KAS", sompi_to_kas(view.total_fees))),
         ]),
         Line::from(vec![
-            Span::styled(" Total Fees:      ", Style::default().fg(Color::DarkGray)),
-            Span::raw(format_number(view.total_fees)),
-        ]),
-        Line::from(vec![
-            Span::styled(" Min Fee (mass):  ", Style::default().fg(Color::DarkGray)),
-            Span::raw(if view.fee_count > 0 {
-                view.min_fee.to_string()
-            } else {
-                "—".to_string()
-            }),
-        ]),
-        Line::from(vec![
-            Span::styled(" Max Fee (mass):  ", Style::default().fg(Color::DarkGray)),
-            Span::raw(if view.fee_count > 0 {
-                view.max_fee.to_string()
-            } else {
-                "—".to_string()
-            }),
-        ]),
-        Line::from(vec![
-            Span::styled(" Tx w/ Fee Data:  ", Style::default().fg(Color::DarkGray)),
-            Span::raw(format_number(view.fee_count as u64)),
+            Span::styled(" Avg Fee:       ", Style::default().fg(Color::DarkGray)),
+            Span::raw(format!("{:.8} KAS", sompi_to_kas(view.avg_fee as u64))),
         ]),
     ];
+
+    // Fee estimate buckets from node
+    if let Some(ref fee) = app.node.fee_estimate {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled(" Priority Fee:  ", Style::default().fg(Color::DarkGray)),
+            Span::raw(&fee.priority_bucket),
+        ]));
+        if let Some(normal) = fee.normal_buckets.first() {
+            lines.push(Line::from(vec![
+                Span::styled(" Normal Fee:    ", Style::default().fg(Color::DarkGray)),
+                Span::raw(normal),
+            ]));
+        }
+        if let Some(low) = fee.low_buckets.first() {
+            lines.push(Line::from(vec![
+                Span::styled(" Low Fee:       ", Style::default().fg(Color::DarkGray)),
+                Span::raw(low),
+            ]));
+        }
+    }
+
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-fn render_tx_table(frame: &mut Frame, area: Rect, view: &AggregatedView) {
+fn render_tx_table(frame: &mut Frame, area: Rect, view: &AggregatedView, tw: TimeWindow) {
+    let tps = view.tx_count as f64 / tw.seconds();
     let lines = vec![
-        Line::from(vec![
-            Span::styled(
-                " Time Periods:       ",
-                Style::default().fg(Color::DarkGray),
-            ),
-            Span::raw(format_number(view.blocks_analyzed as u64)),
-        ]),
         Line::from(vec![
             Span::styled(
                 " Total Transactions: ",
                 Style::default().fg(Color::DarkGray),
             ),
             Span::raw(format_number(view.tx_count as u64)),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                " TPS:                ",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::raw(format!("{:.2}", tps)),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                " Avg Mass:           ",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::raw(format!("{:.2}", view.avg_mass)),
         ]),
         Line::from(vec![
             Span::styled(
@@ -273,16 +287,16 @@ fn render_protocol_table(frame: &mut Frame, area: Rect, view: &AggregatedView) {
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("      "),
+        Span::raw("   "),
         Span::styled(
             "Txs",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("          "),
+        Span::raw("       "),
         Span::styled(
-            "Fees",
+            "Fees (KAS)",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
@@ -292,9 +306,9 @@ fn render_protocol_table(frame: &mut Frame, area: Rect, view: &AggregatedView) {
     for (proto, count) in &view.protocol_counts {
         let fees = fee_map.get(proto).copied().unwrap_or(0);
         lines.push(Line::from(vec![
-            Span::raw(format!("  {:<14} ", proto.label())),
+            Span::raw(format!("  {:<11} ", proto.label())),
             Span::raw(format!("{:>8}  ", format_number(*count as u64))),
-            Span::raw(format_number(fees)),
+            Span::raw(format!("{:>12.4}", sompi_to_kas(fees))),
         ]));
     }
 
@@ -329,7 +343,7 @@ fn render_address_table(frame: &mut Frame, area: Rect, view: &AggregatedView, is
         ),
         Span::raw("                                         "),
         Span::styled(
-            "Txs",
+            "Tx Count",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
@@ -348,8 +362,8 @@ fn render_address_table(frame: &mut Frame, area: Rect, view: &AggregatedView, is
 
 // --- Chart Renderers ---
 
-fn render_fee_chart(frame: &mut Frame, area: Rect, view: &AggregatedView) {
-    if view.fee_over_time.is_empty() {
+fn render_mass_chart(frame: &mut Frame, area: Rect, view: &AggregatedView) {
+    if view.mass_over_time.is_empty() {
         frame.render_widget(
             Paragraph::new(Span::styled(
                 " No fee data for chart",
@@ -360,11 +374,11 @@ fn render_fee_chart(frame: &mut Frame, area: Rect, view: &AggregatedView) {
         return;
     }
 
-    let data = &view.fee_over_time;
+    let data = &view.mass_over_time;
     let (x_min, x_max, y_min, y_max) = compute_bounds(data);
 
     let dataset = Dataset::default()
-        .name("Avg Fee")
+        .name("Avg Mass")
         .marker(Marker::Braille)
         .style(Style::default().fg(Color::Cyan))
         .data(data);

@@ -4,7 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
-use crate::app::App;
+use crate::app::{App, RpcExplorerPanel};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
@@ -17,12 +17,23 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_method_list(frame: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default().borders(Borders::ALL).title(Span::styled(
-        " RPC Methods ",
+    let is_active = app.rpc_explorer_panel == RpcExplorerPanel::Methods;
+    let border_style = if is_active {
         Style::default()
             .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    ));
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .title(Span::styled(
+            " RPC Methods ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -80,14 +91,25 @@ fn render_response(frame: &mut Frame, area: Rect, app: &App) {
     let max_scroll = content_lines.saturating_sub(visible_height);
     let clamped_scroll = app.rpc_explorer.scroll_offset.min(max_scroll);
 
+    let is_active = app.rpc_explorer_panel == RpcExplorerPanel::Response;
+    let border_style = if is_active {
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
     let paragraph = Paragraph::new(content)
         .block(
-            Block::default().borders(Borders::ALL).title(Span::styled(
-                scroll_hint,
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )),
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(border_style)
+                .title(Span::styled(
+                    scroll_hint,
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )),
         )
         .wrap(Wrap { trim: false })
         .scroll((clamped_scroll as u16, 0));
