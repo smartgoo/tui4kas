@@ -154,6 +154,15 @@ impl RpcManager {
         app.dirty = true;
     }
 
+    /// Fetch a single mempool entry by transaction ID string.
+    /// Returns the debug-formatted RpcMempoolEntry.
+    pub async fn get_mempool_entry(&self, tx_id_str: &str) -> Result<String> {
+        let tx_id = kaspa_rpc_core::RpcHash::from_str(tx_id_str)
+            .map_err(|e| anyhow::anyhow!("Invalid transaction ID: {}", e))?;
+        let entry = self.client.get_mempool_entry(tx_id, true, false).await?;
+        Ok(format!("{:#?}", entry))
+    }
+
     pub async fn execute_rpc_call(&self, method: &str) -> Result<String> {
         match method {
             "get_server_info" => {

@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use crate::app::{App, MiningPanel, RpcExplorerPanel, SettingsState, Tab};
 use crate::config::AppConfig;
 use crate::rpc::client::RpcManager;
-use crate::rpc::types::sompi_to_kas;
+
 
 /// Base URL for the Kaspa block explorer.
 const EXPLORER_BASE: &str = "https://kaspa.stream";
@@ -124,7 +124,7 @@ pub fn handle_normal_keys(
         (KeyCode::Esc, _) => {
             // Dispatch Esc to tab-specific handlers for popup closing
             match app.active_tab {
-                Tab::Mempool => handle_mempool_keys(app, key.code),
+                Tab::Mempool => handle_mempool_keys(app, key.code, rpc, app_state),
                 Tab::Analytics => handle_analytics_keys(app, key.code),
                 _ => {}
             }
@@ -133,7 +133,10 @@ pub fn handle_normal_keys(
             app.show_help = true;
         }
         (KeyCode::Char('p'), _) => {
-            app.paused = !app.paused;
+            app.paused = true;
+        }
+        (KeyCode::Char('u'), _) => {
+            app.paused = false;
         }
         (KeyCode::Char('c'), _) => {
             if let Some(text) = get_focused_text(app) {
@@ -169,7 +172,7 @@ pub fn handle_normal_keys(
             Tab::Dashboard => handle_dashboard_keys(app, key.code),
             Tab::Mining => handle_mining_keys(app, key.code),
             Tab::RpcExplorer => handle_rpc_explorer_keys(app, key.code, rpc, app_state),
-            Tab::Mempool => handle_mempool_keys(app, key.code),
+            Tab::Mempool => handle_mempool_keys(app, key.code, rpc, app_state),
             Tab::Analytics => handle_analytics_keys(app, key.code),
             Tab::Settings => handle_settings_keys(app, key.code, settings_tx),
         },
@@ -414,7 +417,12 @@ pub fn handle_rpc_explorer_keys(
     }
 }
 
-pub fn handle_mempool_keys(app: &mut App, key: KeyCode) {
+pub fn handle_mempool_keys(
+    app: &mut App,
+    key: KeyCode,
+    rpc: &Arc<RpcManager>,
+    app_state: &Arc<RwLock<App>>,
+) {
     if app.mempool_detail.is_some() {
         if key == KeyCode::Esc {
             app.mempool_detail = None;
@@ -456,15 +464,19 @@ pub fn handle_mempool_keys(app: &mut App, key: KeyCode) {
             if let Some(ref mempool) = app.node.mempool_state
                 && app.mempool_selected < mempool.entries.len()
             {
-                let entry = &mempool.entries[app.mempool_selected];
-                let detail = format!(
-                    "Transaction ID: {}\nFee: {:.8} KAS ({} sompi)\nOrphan: {}",
-                    entry.transaction_id,
-                    sompi_to_kas(entry.fee),
-                    entry.fee,
-                    if entry.is_orphan { "Yes" } else { "No" },
-                );
-                app.mempool_detail = Some(detail);
+                let tx_id = mempool.entries[app.mempool_selected].transaction_id.clone();
+                app.mempool_detail = Some("Loading...".to_string());
+
+                let rpc = rpc.clone();
+                let state = app_state.clone();
+                tokio::spawn(async move {
+                    let result = match rpc.get_mempool_entry(&tx_id).await {
+                        Ok(response) => response,
+                        Err(e) => format!("Error fetching mempool entry: {}", e),
+                    };
+                    let mut app_guard = state.write().await;
+                    app_guard.mempool_detail = Some(result);
+                });
             }
         }
         _ => {}
