@@ -1,4 +1,3 @@
-mod analytics;
 mod analytics_streaming;
 mod app;
 mod cli;

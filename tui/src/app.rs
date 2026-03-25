@@ -1,12 +1,10 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use tui4kas_core::analytics::{AggregatedView, AnalyticsEngine, TimeWindow};
 use tui4kas_core::config::AppConfig;
 use tui4kas_core::price::KaspaPrice;
 use tui4kas_core::rpc::types::*;
-
-pub use crate::analytics::TimeWindow;
-use crate::analytics::{AggregatedView, AnalyticsEngine};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {

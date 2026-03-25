@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::RwLock;
+use tui4kas_core::analytics::AnalyticsEngine;
 
 use crate::app::App;
 use crate::connection::PollingHandles;
@@ -21,7 +22,6 @@ pub fn start_analytics_streaming(
     let app = app.clone();
 
     handles.analytics = Some(tokio::spawn(async move {
-        use crate::analytics::AnalyticsEngine;
         use std::str::FromStr;
 
         let cache_path = dirs::home_dir()

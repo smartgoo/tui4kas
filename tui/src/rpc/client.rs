@@ -141,10 +141,7 @@ impl RpcManager {
     }
 
     /// Delegate to core's fetch_mining_info
-    pub async fn fetch_mining_info(
-        &self,
-        block_count: usize,
-    ) -> Result<MiningInfo> {
+    pub async fn fetch_mining_info(&self, block_count: usize) -> Result<MiningInfo> {
         self.rpc.fetch_mining_info(block_count).await
     }
 
