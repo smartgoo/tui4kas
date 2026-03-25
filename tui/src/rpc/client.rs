@@ -6,9 +6,9 @@ use kaspa_rpc_core::api::rpc::RpcApi;
 use tokio::sync::RwLock;
 
 pub use tui4kas_core::rpc::client::{RpcClient, extract_block_summaries};
+use tui4kas_core::rpc::types::{DagInfo, MiningInfo, RpcMethod};
 
 use crate::app::{App, ConnectionStatus};
-use crate::rpc::types::RpcMethod;
 
 pub struct RpcManager {
     pub rpc: Arc<RpcClient>,
@@ -93,7 +93,7 @@ impl RpcManager {
         }
         match dag_info {
             Ok(v) => {
-                let info: crate::rpc::types::DagInfo = v.into();
+                let info: DagInfo = v.into();
                 app.node.dag_info = Some(info);
             }
             Err(e) => errors.push(format!("dag_info: {}", e)),
@@ -144,7 +144,7 @@ impl RpcManager {
     pub async fn fetch_mining_info(
         &self,
         block_count: usize,
-    ) -> Result<crate::rpc::types::MiningInfo> {
+    ) -> Result<MiningInfo> {
         self.rpc.fetch_mining_info(block_count).await
     }
 

@@ -6,6 +6,7 @@ use base64::Engine;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use tokio::sync::RwLock;
 use tui4kas_core::config::AppConfig;
+use tui4kas_core::rpc::types::RpcMethod;
 
 use crate::app::{App, MiningPanel, RpcExplorerPanel, SettingsState, Tab};
 use crate::rpc::client::RpcManager;

@@ -4,10 +4,10 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Axis, Bar, BarChart, BarGroup, Block, Borders, Chart, Dataset, Paragraph};
+use tui4kas_core::rpc::types::{format_number, sompi_to_kas};
 
 use crate::analytics::AggregatedView;
 use crate::app::{App, TimeWindow, ViewMode};
-use crate::rpc::types::{format_number, sompi_to_kas};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     if !app.has_direct_url() {

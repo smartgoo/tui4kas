@@ -3,9 +3,9 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Row, Table, Wrap};
+use tui4kas_core::rpc::types::sompi_to_kas;
 
 use crate::app::App;
-use crate::rpc::types::sompi_to_kas;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()

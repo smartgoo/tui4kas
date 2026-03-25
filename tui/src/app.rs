@@ -3,10 +3,10 @@ use std::time::Instant;
 
 use tui4kas_core::config::AppConfig;
 use tui4kas_core::price::KaspaPrice;
+use tui4kas_core::rpc::types::*;
 
 pub use crate::analytics::TimeWindow;
 use crate::analytics::{AggregatedView, AnalyticsEngine};
-use crate::rpc::types::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {

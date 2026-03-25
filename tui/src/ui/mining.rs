@@ -3,9 +3,9 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
+use tui4kas_core::rpc::types::format_hashrate;
 
 use crate::app::{App, MiningPanel};
-use crate::rpc::types::format_hashrate;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     if !app.has_direct_url() {
