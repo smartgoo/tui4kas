@@ -1,65 +1,12 @@
-use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Instant;
 
 use tui4kas_core::price::KaspaPrice;
 
+pub use crate::analytics::TimeWindow;
 use crate::analytics::{AggregatedView, AnalyticsEngine};
 use crate::config::AppConfig;
 use crate::rpc::types::*;
-
-#[derive(Debug, Clone)]
-pub struct DagSample {
-    pub timestamp: Instant,
-    pub blue_score: u64,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct DagStats {
-    pub samples: VecDeque<DagSample>,
-    pub sink_blue_score: Option<u64>,
-}
-
-impl DagStats {
-    pub fn update(&mut self, blue_score: Option<u64>) {
-        self.sink_blue_score = blue_score;
-        self.samples.push_back(DagSample {
-            timestamp: Instant::now(),
-            blue_score: blue_score.unwrap_or(0),
-        });
-        while self.samples.len() > 120 {
-            self.samples.pop_front();
-        }
-    }
-
-    pub fn blue_block_rate(&self) -> Option<f64> {
-        if self.samples.len() < 2 {
-            return None;
-        }
-        let first = self.samples.front()?;
-        let last = self.samples.back()?;
-        let elapsed = last.timestamp.duration_since(first.timestamp).as_secs_f64();
-        if elapsed < 0.1 {
-            return None;
-        }
-        let delta = last.blue_score.saturating_sub(first.blue_score) as f64;
-        Some(delta / elapsed)
-    }
-
-    pub fn block_interval_ms(&self) -> Option<f64> {
-        if self.samples.len() < 2 {
-            return None;
-        }
-        let first = self.samples.front()?;
-        let last = self.samples.back()?;
-        let delta = last.blue_score.saturating_sub(first.blue_score);
-        if delta == 0 {
-            return None;
-        }
-        let elapsed_ms = last.timestamp.duration_since(first.timestamp).as_secs_f64() * 1000.0;
-        Some(elapsed_ms / delta as f64)
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -225,56 +172,6 @@ impl ViewMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum TimeWindow {
-    #[default]
-    OneMin,
-    FifteenMin,
-    ThirtyMin,
-    OneHour,
-    SixHour,
-    TwelveHour,
-    TwentyFourHour,
-}
-
-impl TimeWindow {
-    pub fn cycle(&mut self) {
-        *self = match self {
-            Self::OneMin => Self::FifteenMin,
-            Self::FifteenMin => Self::ThirtyMin,
-            Self::ThirtyMin => Self::OneHour,
-            Self::OneHour => Self::SixHour,
-            Self::SixHour => Self::TwelveHour,
-            Self::TwelveHour => Self::TwentyFourHour,
-            Self::TwentyFourHour => Self::OneMin,
-        };
-    }
-
-    pub fn seconds(&self) -> f64 {
-        match self {
-            Self::OneMin => 60.0,
-            Self::FifteenMin => 900.0,
-            Self::ThirtyMin => 1800.0,
-            Self::OneHour => 3600.0,
-            Self::SixHour => 21600.0,
-            Self::TwelveHour => 43200.0,
-            Self::TwentyFourHour => 86400.0,
-        }
-    }
-
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::OneMin => "1m",
-            Self::FifteenMin => "15m",
-            Self::ThirtyMin => "30m",
-            Self::OneHour => "1h",
-            Self::SixHour => "6h",
-            Self::TwelveHour => "12h",
-            Self::TwentyFourHour => "24h",
-        }
-    }
-}
-
 pub struct SettingsState {
     pub config: AppConfig,
     pub selected_field: usize,
@@ -305,7 +202,7 @@ pub enum ConnectionStatus {
 
 pub struct RpcExplorerState {
     pub selected_method: usize,
-    pub available_methods: Vec<&'static str>,
+    pub available_methods: Vec<RpcMethod>,
     pub last_response: Option<String>,
     pub is_loading: bool,
     pub scroll_offset: usize,
@@ -315,10 +212,7 @@ impl Default for RpcExplorerState {
     fn default() -> Self {
         Self {
             selected_method: 0,
-            available_methods: crate::rpc::types::RPC_METHODS
-                .iter()
-                .map(|(name, _)| *name)
-                .collect(),
+            available_methods: RpcMethod::ALL.to_vec(),
             last_response: None,
             is_loading: false,
             scroll_offset: 0,
@@ -526,22 +420,34 @@ mod tests {
     fn rpc_explorer_default_has_all_methods() {
         let state = RpcExplorerState::default();
         assert!(state.available_methods.len() >= 18);
-        assert!(state.available_methods.contains(&"ping"));
-        assert!(state.available_methods.contains(&"get_server_info"));
-        assert!(state.available_methods.contains(&"get_sink"));
-        assert!(state.available_methods.contains(&"get_sink_blue_score"));
-        assert!(state.available_methods.contains(&"get_info"));
-        assert!(state.available_methods.contains(&"get_peer_addresses"));
-        assert!(state.available_methods.contains(&"get_current_network"));
+        assert!(state.available_methods.contains(&RpcMethod::Ping));
+        assert!(state.available_methods.contains(&RpcMethod::GetServerInfo));
+        assert!(state.available_methods.contains(&RpcMethod::GetSink));
         assert!(
             state
                 .available_methods
-                .contains(&"get_fee_estimate_experimental")
+                .contains(&RpcMethod::GetSinkBlueScore)
+        );
+        assert!(state.available_methods.contains(&RpcMethod::GetInfo));
+        assert!(
+            state
+                .available_methods
+                .contains(&RpcMethod::GetPeerAddresses)
         );
         assert!(
             state
                 .available_methods
-                .contains(&"estimate_network_hashes_per_second")
+                .contains(&RpcMethod::GetCurrentNetwork)
+        );
+        assert!(
+            state
+                .available_methods
+                .contains(&RpcMethod::GetFeeEstimateExperimental)
+        );
+        assert!(
+            state
+                .available_methods
+                .contains(&RpcMethod::EstimateNetworkHashesPerSecond)
         );
     }
 

@@ -8,12 +8,14 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+clap.workspace = true
 base64.workspace = true
 bincode.workspace = true
 crossterm.workspace = true
 dirs.workspace = true
 futures.workspace = true
 indexmap.workspace = true
+log.workspace = true
 kaspa-rpc-core.workspace = true
 kaspa-wrpc-client.workspace = true
 num_cpus.workspace = true

@@ -13,6 +13,10 @@ pub fn start_analytics_streaming(
     app: &Arc<RwLock<App>>,
     handles: &mut PollingHandles,
 ) {
+    if let Some(h) = handles.analytics.take() {
+        h.abort();
+    }
+
     let rpc = rpc.clone();
     let app = app.clone();
 
@@ -115,7 +119,8 @@ pub fn start_analytics_streaming(
 
             match rpc.fetch_vspc_v2(current_hash).await {
                 Ok(response) => {
-                    let (summaries, removed) = RpcManager::extract_block_summaries(&response);
+                    let (summaries, removed) =
+                        crate::rpc::client::extract_block_summaries(&response);
 
                     let block_count = summaries.len();
 

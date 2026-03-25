@@ -1,14 +1,14 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 const COINGECKO_URL: &str = "https://api.coingecko.com/api/v3/simple/price?ids=kaspa&vs_currencies=usd,btc&include_market_cap=true&include_24hr_vol=true&include_24hr_change=true";
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct PriceResponse {
     pub kaspa: KaspaPrice,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct KaspaPrice {
     pub usd: f64,
     pub btc: f64,

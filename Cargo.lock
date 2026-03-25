@@ -3964,12 +3964,14 @@ dependencies = [
  "anyhow",
  "base64",
  "bincode",
+ "clap",
  "crossterm",
  "dirs",
  "futures",
  "indexmap",
  "kaspa-rpc-core",
  "kaspa-wrpc-client",
+ "log",
  "num_cpus",
  "open",
  "ratatui",
@@ -3985,8 +3987,10 @@ dependencies = [
 name = "tui4kas-cli"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "clap",
  "log",
+ "serde_json",
  "tokio",
  "tui4kas-core",
 ]
@@ -3995,11 +3999,20 @@ dependencies = [
 name = "tui4kas-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "bincode",
+ "dirs",
+ "futures",
+ "indexmap",
  "kaspa-rpc-core",
  "kaspa-wrpc-client",
+ "log",
+ "log4rs",
  "reqwest",
  "serde",
  "serde_json",
+ "tokio",
+ "toml",
 ]
 
 [[package]]

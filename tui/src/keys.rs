@@ -381,11 +381,10 @@ pub fn handle_rpc_explorer_keys(
             app.rpc_explorer.scroll_offset = 0;
             app.rpc_explorer_panel = RpcExplorerPanel::Response;
 
-            let method = method.to_string();
             let rpc = rpc.clone();
             let state = app_state.clone();
             tokio::spawn(async move {
-                let result = match rpc.execute_rpc_call(&method).await {
+                let result = match rpc.execute_rpc_call(method).await {
                     Ok(response) => response,
                     Err(e) => format!("Error: {}", e),
                 };

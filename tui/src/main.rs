@@ -1,6 +1,7 @@
 mod analytics;
 mod analytics_streaming;
 mod app;
+mod cli;
 mod config;
 mod connection;
 mod event;
@@ -13,6 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
+use clap::Parser;
 use crossterm::ExecutableCommand;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -31,8 +33,14 @@ use crate::rpc::market;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Load app config
-    let config = AppConfig::load().unwrap_or_default();
+    // Parse CLI args and load config with overrides
+    let args = cli::CliArgs::parse();
+    let log_level = args.log_level;
+    let mut config = AppConfig::load().unwrap_or_default();
+    config.apply_overrides(args.into_overrides());
+
+    // Init logging (file only — no stdout, would corrupt terminal)
+    tui4kas_core::log::init_logger(tui4kas_core::log::LogTarget::Tui, log_level).unwrap();
 
     // Set up panic hook to restore terminal
     let original_hook = std::panic::take_hook();
@@ -143,7 +151,7 @@ async fn main() -> Result<()> {
                             Err(_) => {
                                 // Best effort — create a disconnected manager
                                 if let Ok(mgr) =
-                                    RpcManager::new(None, &new_config.network, app_bg.clone()).await
+                                    RpcManager::new(None, &new_config.network, app_bg.clone())
                                 {
                                     let _ = reconnect_tx_bg.send((Arc::new(mgr), handles)).await;
                                 }

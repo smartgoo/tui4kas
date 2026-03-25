@@ -4,30 +4,10 @@ use std::time::Duration;
 use anyhow::Result;
 use tokio::sync::RwLock;
 
+pub use tui4kas_core::rpc::polling::PollingHandles;
+
 use crate::app::App;
 use crate::rpc::client::RpcManager;
-
-/// Tracks cancellable background polling tasks.
-#[derive(Default)]
-pub struct PollingHandles {
-    pub core: Option<tokio::task::JoinHandle<()>>,
-    pub mining: Option<tokio::task::JoinHandle<()>>,
-    pub analytics: Option<tokio::task::JoinHandle<()>>,
-}
-
-impl PollingHandles {
-    pub fn abort_all(&mut self) {
-        if let Some(h) = self.core.take() {
-            h.abort();
-        }
-        if let Some(h) = self.mining.take() {
-            h.abort();
-        }
-        if let Some(h) = self.analytics.take() {
-            h.abort();
-        }
-    }
-}
 
 pub fn start_mining_polling(
     rpc: &Arc<RpcManager>,
@@ -60,10 +40,6 @@ pub fn start_mining_polling(
             }
         }
     }));
-
-    if let Some(h) = handles.analytics.take() {
-        h.abort();
-    }
 }
 
 /// Create an RPC manager, connect, and start polling.
@@ -76,7 +52,7 @@ pub async fn create_and_start_rpc(
     retry: bool,
     handles: &mut PollingHandles,
 ) -> Result<Arc<RpcManager>> {
-    let rpc_manager = RpcManager::new(url, network, app.clone()).await?;
+    let rpc_manager = RpcManager::new(url, network, app.clone())?;
     let rpc = Arc::new(rpc_manager);
 
     let rpc_for_connect = rpc.clone();
