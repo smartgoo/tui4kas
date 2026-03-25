@@ -1,11 +1,11 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use tui4kas_core::config::AppConfig;
 use tui4kas_core::price::KaspaPrice;
 
 pub use crate::analytics::TimeWindow;
 use crate::analytics::{AggregatedView, AnalyticsEngine};
-use crate::config::AppConfig;
 use crate::rpc::types::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

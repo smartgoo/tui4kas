@@ -5,9 +5,9 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use tokio::sync::RwLock;
+use tui4kas_core::config::AppConfig;
 
 use crate::app::{App, MiningPanel, RpcExplorerPanel, SettingsState, Tab};
-use crate::config::AppConfig;
 use crate::rpc::client::RpcManager;
 
 /// Base URL for the Kaspa block explorer.

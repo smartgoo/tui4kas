@@ -2,7 +2,6 @@ mod analytics;
 mod analytics_streaming;
 mod app;
 mod cli;
-mod config;
 mod connection;
 mod event;
 mod keys;
@@ -22,9 +21,9 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::sync::RwLock;
+use tui4kas_core::config::AppConfig;
 
 use crate::app::App;
-use crate::config::AppConfig;
 use crate::connection::{PollingHandles, create_and_start_rpc, start_mining_polling};
 use crate::event::{AppEvent, EventHandler};
 use crate::keys::SettingsCommand;
